@@ -170,5 +170,35 @@ class User extends Authenticatable
         
         return $query->get();
     }
+
+    public static function getStudentsForSelect(): \Illuminate\Support\Collection
+    {
+        return static::byType(UserType::STUDENT)
+            ->with('studentProfile')
+            ->get()
+            ->mapWithKeys(function ($user) {
+                $studentId = $user->studentProfile?->student_id ?? 'No ID';
+                $label = "{$user->name} ({$studentId})";
+                return [$user->id => $label];
+            });
+    }
+
+    public static function searchStudents(string $search = ''): \Illuminate\Support\Collection
+    {
+        return static::byType(UserType::STUDENT)
+            ->with('studentProfile')
+            ->where(function ($query) use ($search) {
+                $query->where('name', 'like', "%{$search}%")
+                    ->orWhereHas('studentProfile', function ($q) use ($search) {
+                        $q->where('student_id', 'like', "%{$search}%");
+                    });
+            })
+            ->get()
+            ->mapWithKeys(function ($user) {
+                $studentId = $user->studentProfile?->student_id ?? 'No ID';
+                $label = "{$user->name} ({$studentId})";
+                return [$user->id => $label];
+            });
+    }
 }
 

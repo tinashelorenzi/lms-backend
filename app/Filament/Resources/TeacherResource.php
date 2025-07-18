@@ -76,7 +76,7 @@ class TeacherResource extends Resource
                         TextInput::make('teacherProfile.salary')
                             ->label('Salary')
                             ->numeric()
-                            ->prefix('$'),
+                            ->prefix('R'),
                     ])
                     ->columns(2),
 
@@ -137,7 +137,7 @@ class TeacherResource extends Resource
                     ->sortable(),
                 TextColumn::make('teacherProfile.salary')
                     ->label('Salary')
-                    ->money('USD')
+                    ->money('ZAR')
                     ->sortable(),
                 BooleanColumn::make('is_active')
                     ->sortable(),

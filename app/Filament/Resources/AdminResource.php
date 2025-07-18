@@ -75,7 +75,7 @@ class AdminResource extends Resource
                         TextInput::make('adminProfile.salary')
                             ->label('Salary')
                             ->numeric()
-                            ->prefix('$'),
+                            ->prefix('R'),
                     ])
                     ->columns(2),
 

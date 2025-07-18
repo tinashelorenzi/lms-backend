@@ -69,10 +69,17 @@ class SchoolClassResource extends Resource
                                     ->label('Student')
                                     ->options(
                                         User::byType(UserType::STUDENT)
-                                            ->pluck('name', 'id')
+                                            ->with('studentProfile')
+                                            ->get()
+                                            ->mapWithKeys(function ($user) {
+                                                $studentId = $user->studentProfile?->student_id ?? 'No ID';
+                                                return [$user->id => "{$user->name} ({$studentId})"];
+                                            })
                                     )
                                     ->required()
-                                    ->searchable(),
+                                    ->searchable()
+                                    ->placeholder('Search by name or student ID...')
+                                    ->helperText('You can search by student name or student ID'),
                                 Forms\Components\DatePicker::make('enrollment_date')
                                     ->required()
                                     ->default(now()),
@@ -109,19 +116,8 @@ class SchoolClassResource extends Resource
                 TextColumn::make('students_count')
                     ->counts('students')
                     ->label('Total Students'),
-                TextColumn::make('active_student_count')
-                    ->getStateUsing(function ($record) {
-                        return $record->activeStudents()->count();
-                    })
-                    ->label('Active Students'),
                 TextColumn::make('max_students')
                     ->label('Max Students'),
-                TextColumn::make('available_spots')
-                    ->getStateUsing(function ($record) {
-                        return $record->available_spots;
-                    })
-                    ->label('Available Spots')
-                    ->color(fn ($state) => $state <= 0 ? 'danger' : ($state <= 5 ? 'warning' : 'success')),
                 BooleanColumn::make('is_active')
                     ->sortable(),
                 TextColumn::make('created_at')

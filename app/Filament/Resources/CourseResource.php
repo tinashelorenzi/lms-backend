@@ -98,10 +98,17 @@ class CourseResource extends Resource
                                     ->label('Student')
                                     ->options(
                                         User::byType(UserType::STUDENT)
-                                            ->pluck('name', 'id')
+                                            ->with('studentProfile')
+                                            ->get()
+                                            ->mapWithKeys(function ($user) {
+                                                $studentId = $user->studentProfile?->student_id ?? 'No ID';
+                                                return [$user->id => "{$user->name} ({$studentId})"];
+                                            })
                                     )
                                     ->required()
-                                    ->searchable(),
+                                    ->searchable()
+                                    ->placeholder('Search by name or student ID...')
+                                    ->helperText('You can search by student name or student ID'),
                                 TextInput::make('academic_year')
                                     ->required()
                                     ->default(now()->year . '-' . (now()->year + 1)),
@@ -127,7 +134,8 @@ class CourseResource extends Resource
                                     ->numeric()
                                     ->step(0.01)
                                     ->minValue(0)
-                                    ->maxValue(100),
+                                    ->maxValue(100)
+                                    ->suffix('%'),
                             ])
                             ->columns(3)
                             ->collapsible(),
