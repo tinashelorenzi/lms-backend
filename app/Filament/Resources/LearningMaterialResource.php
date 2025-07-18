@@ -5,8 +5,9 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\LearningMaterialResource\Pages;
 use App\Filament\Resources\LearningMaterialResource\RelationManagers;
 use App\Models\LearningMaterial;
-use App\Enums\LearningMaterialType;
-use App\Services\VideoService;
+use App\Enums\ContentFormat;
+use App\Services\ContentProcessor;
+use App\Filament\Components\AdvancedContentEditor;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -16,14 +17,16 @@ use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Toggle;
-use Filament\Forms\Components\RichEditor;
 use Filament\Forms\Components\TagsInput;
 use Filament\Forms\Components\KeyValue;
+use Filament\Forms\Components\Tabs;
+use Filament\Forms\Components\Section;
+use Filament\Forms\Components\Group;
 use Filament\Forms\Components\Placeholder;
+use Filament\Forms\Components\ViewField;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\BooleanColumn;
 use Filament\Tables\Columns\BadgeColumn;
-use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Actions\BulkAction;
@@ -35,7 +38,7 @@ use Filament\Forms\Set;
 class LearningMaterialResource extends Resource
 {
     protected static ?string $model = LearningMaterial::class;
-    protected static ?string $navigationIcon = 'heroicon-o-play-circle';
+    protected static ?string $navigationIcon = 'heroicon-o-document-text';
     protected static ?string $navigationLabel = 'Learning Materials';
     protected static ?string $navigationGroup = 'Learning Management';
     protected static ?int $navigationSort = 2;
@@ -44,105 +47,222 @@ class LearningMaterialResource extends Resource
     {
         return $form
             ->schema([
-                Forms\Components\Section::make('Basic Information')
-                    ->schema([
-                        TextInput::make('title')
-                            ->required()
-                            ->maxLength(255),
-                        Textarea::make('description')
-                            ->rows(3),
-                        Select::make('type')
-                            ->options([
-                                LearningMaterialType::TEXT->value => LearningMaterialType::TEXT->label(),
-                                LearningMaterialType::VIDEO->value => LearningMaterialType::VIDEO->label(),
-                            ])
-                            ->required()
-                            ->live()
-                            ->afterStateUpdated(function (Set $set, $state) {
-                                if ($state === LearningMaterialType::TEXT->value) {
-                                    $set('video_platform', null);
-                                    $set('video_id', null);
-                                    $set('video_url', null);
-                                }
-                            }),
-                        TextInput::make('estimated_duration')
-                            ->label('Estimated Duration (minutes)')
-                            ->numeric()
-                            ->minValue(1)
-                            ->placeholder('e.g., 15'),
-                        Toggle::make('is_active')
-                            ->label('Active')
-                            ->default(true),
-                    ])
-                    ->columns(2),
+                Tabs::make('content')
+                    ->tabs([
+                        // CONTENT TAB
+                        Tabs\Tab::make('Content')
+                            ->icon('heroicon-o-document-text')
+                            ->schema([
+                                Section::make('Basic Information')
+                                    ->schema([
+                                        TextInput::make('title')
+                                            ->required()
+                                            ->maxLength(255)
+                                            ->columnSpanFull(),
+                                        Textarea::make('description')
+                                            ->rows(2)
+                                            ->columnSpanFull(),
+                                    ])
+                                    ->columns(2),
 
-                Forms\Components\Section::make('Content')
-                    ->schema([
-                        RichEditor::make('content')
-                            ->label('Text Content')
-                            ->toolbarButtons([
-                                'attachFiles',
-                                'blockquote',
-                                'bold',
-                                'bulletList',
-                                'codeBlock',
-                                'h2',
-                                'h3',
-                                'italic',
-                                'link',
-                                'orderedList',
-                                'redo',
-                                'strike',
-                                'underline',
-                                'undo',
-                            ])
-                            ->visible(fn (Get $get): bool => $get('type') === LearningMaterialType::TEXT->value),
-                    ]),
+                                Section::make('Content Editor')
+                                    ->schema([
+                                        Select::make('content_format')
+                                            ->options([
+                                                ContentFormat::RICH_HTML->value => ContentFormat::RICH_HTML->label(),
+                                                ContentFormat::MARKDOWN->value => ContentFormat::MARKDOWN->label(),
+                                                ContentFormat::PLAIN_TEXT->value => ContentFormat::PLAIN_TEXT->label(),
+                                                ContentFormat::BLOCK_EDITOR->value => ContentFormat::BLOCK_EDITOR->label(),
+                                            ])
+                                            ->default(ContentFormat::RICH_HTML)
+                                            ->live()
+                                            ->afterStateUpdated(function (Set $set, $state) {
+                                                // Clear content when switching formats
+                                                $set('content_raw', '');
+                                            }),
 
-                Forms\Components\Section::make('Video Information')
-                    ->schema([
-                        TextInput::make('video_url')
-                            ->label('Video URL')
-                            ->url()
-                            ->placeholder('https://www.youtube.com/watch?v=...')
-                            ->helperText('Supported platforms: YouTube, Vimeo, Dailymotion, Loom, Google Drive'),
-                        TextInput::make('video_platform')
-                            ->label('Platform')
-                            ->disabled()
-                            ->dehydrated(),
-                        TextInput::make('video_id')
-                            ->label('Video ID')
-                            ->disabled()
-                            ->dehydrated(),
-                        Placeholder::make('video_preview')
-                            ->label('Video Preview')
-                            ->content('Enter video URL and platform details to see preview')
-                            ->formatStateUsing(fn ($state) => new \Illuminate\Support\HtmlString($state)),
-                        KeyValue::make('video_metadata')
-                            ->label('Video Metadata')
-                            ->keyLabel('Property')
-                            ->valueLabel('Value')
-                            ->addActionLabel('Add metadata'),
-                    ])
-                    ->visible(fn (Get $get): bool => $get('type') === LearningMaterialType::VIDEO->value),
+                                        Group::make([
+                                            Toggle::make('allow_latex')
+                                                ->label('Enable LaTeX')
+                                                ->helperText('Allow mathematical expressions using LaTeX syntax'),
+                                            Toggle::make('allow_embeds')
+                                                ->label('Enable Web Embeds')
+                                                ->helperText('Auto-convert URLs to embedded content')
+                                                ->default(true),
+                                        ])
+                                        ->columns(2),
 
-                Forms\Components\Section::make('Classification')
-                    ->schema([
-                        TagsInput::make('tags')
-                            ->label('Tags')
-                            ->placeholder('Add tags for categorization')
-                            ->suggestions([
-                                'programming', 'database', 'web-development', 'mobile', 'design',
-                                'beginner', 'intermediate', 'advanced', 'tutorial', 'theory',
-                                'practical', 'assignment', 'quiz', 'exercise'
+                                        // RICH HTML EDITOR
+                                        ViewField::make('content_raw')
+                                            ->view('filament.components.tiptap-editor')
+                                            ->viewData([
+                                                'toolbar' => [
+                                                    'heading', 'bold', 'italic', 'underline', 'strike', '|',
+                                                    'bulletList', 'orderedList', '|',
+                                                    'link', 'image', 'video', '|',
+                                                    'blockquote', 'codeBlock', 'table', '|',
+                                                    'latex', 'embed', '|',
+                                                    'source', 'fullscreen'
+                                                ],
+                                                'height' => '500px',
+                                                'allowLatex' => fn(Get $get) => $get('allow_latex'),
+                                                'allowEmbeds' => fn(Get $get) => $get('allow_embeds'),
+                                            ])
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::RICH_HTML->value),
+
+                                        // MARKDOWN EDITOR
+                                        ViewField::make('content_raw')
+                                            ->view('filament.components.markdown-editor')
+                                            ->viewData([
+                                                'height' => '500px',
+                                                'allowLatex' => fn(Get $get) => $get('allow_latex'),
+                                                'preview' => true,
+                                                'toolbar' => [
+                                                    'bold', 'italic', 'strikethrough', '|',
+                                                    'heading-1', 'heading-2', 'heading-3', '|',
+                                                    'unordered-list', 'ordered-list', '|',
+                                                    'link', 'image', 'table', '|',
+                                                    'code', 'quote', '|',
+                                                    'preview', 'fullscreen'
+                                                ]
+                                            ])
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::MARKDOWN->value),
+
+                                        // PLAIN TEXT EDITOR
+                                        Textarea::make('content_raw')
+                                            ->label('Content')
+                                            ->rows(20)
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::PLAIN_TEXT->value),
+
+                                        // BLOCK EDITOR
+                                        ViewField::make('content_blocks')
+                                            ->view('filament.components.block-editor')
+                                            ->viewData([
+                                                'allowedBlocks' => [
+                                                    'paragraph', 'heading', 'image', 'video', 
+                                                    'code', 'quote', 'list', 'latex', 'embed'
+                                                ],
+                                                'allowLatex' => fn(Get $get) => $get('allow_latex'),
+                                                'allowEmbeds' => fn(Get $get) => $get('allow_embeds'),
+                                            ])
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::BLOCK_EDITOR->value),
+                                    ])
+                                    ->columnSpanFull(),
                             ]),
-                        KeyValue::make('metadata')
-                            ->label('Additional Metadata')
-                            ->keyLabel('Key')
-                            ->valueLabel('Value')
-                            ->addActionLabel('Add metadata'),
+
+                        // MEDIA TAB
+                        Tabs\Tab::make('Embedded Media')
+                            ->icon('heroicon-o-photo')
+                            ->schema([
+                                Section::make('Media Library')
+                                    ->schema([
+                                        ViewField::make('embedded_media')
+                                            ->view('filament.components.media-manager')
+                                            ->viewData([
+                                                'allowedTypes' => ['image', 'video', 'audio', 'file'],
+                                                'maxFileSize' => '50MB',
+                                                'acceptedFormats' => [
+                                                    'image' => ['jpg', 'png', 'gif', 'webp', 'svg'],
+                                                    'video' => ['mp4', 'webm', 'ogg'],
+                                                    'audio' => ['mp3', 'wav', 'ogg'],
+                                                    'file' => ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx']
+                                                ]
+                                            ]),
+                                    ])
+                                    ->columnSpanFull(),
+
+                                Section::make('Video Sources')
+                                    ->schema([
+                                        KeyValue::make('video_sources')
+                                            ->label('External Video URLs')
+                                            ->keyLabel('Platform')
+                                            ->valueLabel('URL')
+                                            ->addActionLabel('Add Video')
+                                            ->helperText('YouTube, Vimeo, Dailymotion, Loom, Google Drive'),
+                                    ])
+                                    ->columnSpanFull(),
+                            ]),
+
+                        // SETTINGS TAB
+                        Tabs\Tab::make('Settings')
+                            ->icon('heroicon-o-cog-6-tooth')
+                            ->schema([
+                                Section::make('Content Settings')
+                                    ->schema([
+                                        TextInput::make('estimated_duration')
+                                            ->label('Estimated Duration (minutes)')
+                                            ->numeric()
+                                            ->minValue(1)
+                                            ->maxValue(999)
+                                            ->helperText('Leave empty for auto-calculation'),
+                                        Toggle::make('is_active')
+                                            ->label('Active')
+                                            ->default(true),
+                                    ])
+                                    ->columns(2),
+
+                                Section::make('Editor Configuration')
+                                    ->schema([
+                                        KeyValue::make('editor_config')
+                                            ->label('Editor Settings')
+                                            ->keyLabel('Setting')
+                                            ->valueLabel('Value')
+                                            ->addActionLabel('Add Setting')
+                                            ->helperText('Custom editor configuration options'),
+                                    ])
+                                    ->collapsible()
+                                    ->collapsed(),
+
+                                Section::make('Classification')
+                                    ->schema([
+                                        TagsInput::make('tags')
+                                            ->label('Tags')
+                                            ->placeholder('Add tags for categorization')
+                                            ->suggestions([
+                                                'programming', 'database', 'web-development', 'mobile', 'design',
+                                                'beginner', 'intermediate', 'advanced', 'tutorial', 'theory',
+                                                'practical', 'assignment', 'quiz', 'exercise', 'interactive',
+                                                'video', 'text', 'mixed-media', 'latex', 'mathematics'
+                                            ]),
+                                        KeyValue::make('metadata')
+                                            ->label('Additional Metadata')
+                                            ->keyLabel('Key')
+                                            ->valueLabel('Value')
+                                            ->addActionLabel('Add metadata'),
+                                    ]),
+                            ]),
+
+                        // PREVIEW TAB
+                        Tabs\Tab::make('Preview')
+                            ->icon('heroicon-o-eye')
+                            ->schema([
+                                Section::make('Content Preview')
+                                    ->schema([
+                                        ViewField::make('content_preview')
+                                            ->view('filament.components.content-preview')
+                                            ->viewData(fn ($record) => [
+                                                'material' => $record,
+                                                'processor' => app(ContentProcessor::class),
+                                            ]),
+                                    ])
+                                    ->columnSpanFull(),
+
+                                Section::make('Statistics')
+                                    ->schema([
+                                        Placeholder::make('content_stats')
+                                            ->label('Content Statistics')
+                                            ->content(function ($record) {
+                                                if (!$record) return 'No content to analyze';
+                                                
+                                                $stats = app(ContentProcessor::class)->analyzeContent($record);
+                                                return view('filament.components.content-stats', compact('stats'));
+                                            }),
+                                    ])
+                                    ->columnSpanFull(),
+                            ]),
                     ])
-                    ->collapsible(),
+                    ->columnSpanFull()
+                    ->persistTabInQueryString(),
             ]);
     }
 
@@ -152,70 +272,108 @@ class LearningMaterialResource extends Resource
             ->columns([
                 TextColumn::make('title')
                     ->searchable()
-                    ->sortable(),
-                BadgeColumn::make('type')
+                    ->sortable()
+                    ->weight('medium'),
+                
+                BadgeColumn::make('content_type')
+                    ->label('Type')
                     ->colors([
-                        'primary' => LearningMaterialType::TEXT->value,
-                        'success' => LearningMaterialType::VIDEO->value,
+                        'primary' => 'text',
+                        'success' => 'video',
+                        'warning' => 'mixed',
+                        'gray' => 'empty',
                     ])
                     ->icons([
-                        'heroicon-o-document-text' => LearningMaterialType::TEXT->value,
-                        'heroicon-o-play-circle' => LearningMaterialType::VIDEO->value,
-                    ])
-                    ->formatStateUsing(fn ($state) => $state ? LearningMaterialType::from($state)->label() : 'Unknown'),
-                TextColumn::make('video_platform')
-                    ->label('Platform')
-                    ->badge()
+                        'heroicon-o-document-text' => 'text',
+                        'heroicon-o-play-circle' => 'video',
+                        'heroicon-o-squares-plus' => 'mixed',
+                        'heroicon-o-exclamation-triangle' => 'empty',
+                    ]),
+
+                BadgeColumn::make('content_format')
+                    ->label('Format')
                     ->colors([
-                        'danger' => 'youtube',
-                        'primary' => 'vimeo',
-                        'warning' => 'dailymotion',
-                        'success' => 'loom',
-                        'info' => 'google_drive',
+                        'primary' => ContentFormat::RICH_HTML->value,
+                        'info' => ContentFormat::MARKDOWN->value,
+                        'gray' => ContentFormat::PLAIN_TEXT->value,
+                        'warning' => ContentFormat::BLOCK_EDITOR->value,
                     ])
-                    ->visible(fn ($record) => $record && $record->type === LearningMaterialType::VIDEO),
-                TextColumn::make('estimated_duration')
-                    ->label('Duration (min)')
+                    ->formatStateUsing(fn ($state) => $state instanceof ContentFormat ? $state->label() : ContentFormat::from($state)->label()),
+
+                TextColumn::make('estimated_time')
+                    ->label('Duration')
+                    ->suffix(' min')
                     ->sortable(),
+
                 TextColumn::make('sections_count')
                     ->counts('sections')
-                    ->label('Used in Sections'),
+                    ->label('Used in Sections')
+                    ->badge()
+                    ->color('gray'),
+
                 TextColumn::make('tags')
                     ->badge()
                     ->separator(',')
-                    ->limit(3),
+                    ->limit(3)
+                    ->toggleable(),
+
+                BooleanColumn::make('allow_latex')
+                    ->label('LaTeX')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
+                BooleanColumn::make('allow_embeds')
+                    ->label('Embeds')
+                    ->toggleable(isToggledHiddenByDefault: true),
+
                 BooleanColumn::make('is_active')
                     ->sortable(),
+
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                SelectFilter::make('type')
+                SelectFilter::make('content_format')
+                    ->label('Format')
                     ->options([
-                        LearningMaterialType::TEXT->value => LearningMaterialType::TEXT->label(),
-                        LearningMaterialType::VIDEO->value => LearningMaterialType::VIDEO->label(),
+                        ContentFormat::RICH_HTML->value => ContentFormat::RICH_HTML->label(),
+                        ContentFormat::MARKDOWN->value => ContentFormat::MARKDOWN->label(),
+                        ContentFormat::PLAIN_TEXT->value => ContentFormat::PLAIN_TEXT->label(),
+                        ContentFormat::BLOCK_EDITOR->value => ContentFormat::BLOCK_EDITOR->label(),
                     ]),
-                SelectFilter::make('video_platform')
+
+                SelectFilter::make('content_type')
+                    ->label('Content Type')
                     ->options([
-                        'youtube' => 'YouTube',
-                        'vimeo' => 'Vimeo',
-                        'dailymotion' => 'Dailymotion',
-                        'loom' => 'Loom',
-                        'google_drive' => 'Google Drive',
-                    ])
-                    ->visible(fn () => LearningMaterial::where('type', LearningMaterialType::VIDEO)->exists()),
+                        'text' => 'Text Only',
+                        'video' => 'Video Only',
+                        'mixed' => 'Mixed Content',
+                        'empty' => 'Empty',
+                    ]),
+
+                TernaryFilter::make('allow_latex')
+                    ->label('LaTeX Enabled'),
+
+                TernaryFilter::make('allow_embeds')
+                    ->label('Embeds Enabled'),
+
                 TernaryFilter::make('is_active')
                     ->label('Active Status'),
+
                 Tables\Filters\Filter::make('unused')
                     ->label('Unused Materials')
                     ->query(fn (Builder $query): Builder => $query->doesntHave('sections')),
+
+                Tables\Filters\Filter::make('has_video')
+                    ->label('Contains Video')
+                    ->query(fn (Builder $query): Builder => $query->withVideo()),
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
+                
                 Tables\Actions\Action::make('duplicate')
                     ->label('Duplicate')
                     ->icon('heroicon-o-document-duplicate')
@@ -223,27 +381,54 @@ class LearningMaterialResource extends Resource
                         $newMaterial = $record->replicate();
                         $newMaterial->title = $record->title . ' (Copy)';
                         $newMaterial->save();
-                    })
-                    ->successNotificationTitle('Material duplicated successfully'),
+                    }),
+
+                Tables\Actions\Action::make('preview')
+                    ->label('Preview')
+                    ->icon('heroicon-o-eye')
+                    ->url(fn (LearningMaterial $record): string => route('learning-materials.preview', $record))
+                    ->openUrlInNewTab(),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
                     Tables\Actions\DeleteBulkAction::make(),
+                    
                     BulkAction::make('activate')
                         ->label('Activate')
                         ->icon('heroicon-o-check')
-                        ->action(fn (Collection $records) => $records->each->update(['is_active' => true]))
-                        ->requiresConfirmation()
-                        ->color('success'),
+                        ->action(fn (Collection $records) => $records->each(fn ($record) => $record->update(['is_active' => true]))),
+                    
                     BulkAction::make('deactivate')
                         ->label('Deactivate')
                         ->icon('heroicon-o-x-mark')
-                        ->action(fn (Collection $records) => $records->each->update(['is_active' => false]))
-                        ->requiresConfirmation()
-                        ->color('danger'),
+                        ->action(fn (Collection $records) => $records->each(fn ($record) => $record->update(['is_active' => false]))),
+
+                    BulkAction::make('enable_latex')
+                        ->label('Enable LaTeX')
+                        ->icon('heroicon-o-variable')
+                        ->action(fn (Collection $records) => $records->each(fn ($record) => $record->update(['allow_latex' => true]))),
+
+                    BulkAction::make('convert_format')
+                        ->label('Convert Format')
+                        ->icon('heroicon-o-arrow-path')
+                        ->form([
+                            Select::make('target_format')
+                                ->label('Target Format')
+                                ->options([
+                                    ContentFormat::RICH_HTML->value => ContentFormat::RICH_HTML->label(),
+                                    ContentFormat::MARKDOWN->value => ContentFormat::MARKDOWN->label(),
+                                    ContentFormat::PLAIN_TEXT->value => ContentFormat::PLAIN_TEXT->label(),
+                                ])
+                                ->required(),
+                        ])
+                        ->action(function (Collection $records, array $data) {
+                            $processor = app(ContentProcessor::class);
+                            $records->each(function ($record) use ($processor, $data) {
+                                $processor->convertFormat($record, ContentFormat::from($data['target_format']));
+                            });
+                        }),
                 ]),
-            ])
-            ->defaultSort('created_at', 'desc');
+            ]);
     }
 
     public static function getRelations(): array
@@ -258,8 +443,8 @@ class LearningMaterialResource extends Resource
         return [
             'index' => Pages\ListLearningMaterials::route('/'),
             'create' => Pages\CreateLearningMaterial::route('/create'),
-            'view' => Pages\ViewLearningMaterial::route('/{record}'),
             'edit' => Pages\EditLearningMaterial::route('/{record}/edit'),
+            'view' => Pages\ViewLearningMaterial::route('/{record}'),
         ];
     }
 }

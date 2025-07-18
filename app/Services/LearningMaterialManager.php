@@ -25,6 +25,11 @@ class LearningMaterialManager
     public function createMaterial(array $data): LearningMaterial
     {
         return DB::transaction(function () use ($data) {
+            // Handle enum conversion if needed
+            if (isset($data['type']) && is_string($data['type'])) {
+                $data['type'] = LearningMaterialType::from($data['type']);
+            }
+
             $material = new LearningMaterial($data);
 
             // Handle video-specific data
@@ -50,6 +55,11 @@ class LearningMaterialManager
     public function updateMaterial(LearningMaterial $material, array $data): LearningMaterial
     {
         return DB::transaction(function () use ($material, $data) {
+            // Handle enum conversion if needed
+            if (isset($data['type']) && is_string($data['type'])) {
+                $data['type'] = LearningMaterialType::from($data['type']);
+            }
+
             $material->fill($data);
 
             // Handle video-specific data if URL changed
@@ -199,7 +209,8 @@ class LearningMaterialManager
         $query = LearningMaterial::query();
 
         if (!empty($filters['type'])) {
-            $query->where('type', $filters['type']);
+            $type = is_string($filters['type']) ? LearningMaterialType::from($filters['type']) : $filters['type'];
+            $query->where('type', $type);
         }
 
         if (!empty($filters['platform'])) {
@@ -237,4 +248,98 @@ class LearningMaterialManager
         return LearningMaterial::whereIn('id', $materialIds)
             ->update($updateData);
     }
+
+    /**
+ * Import content from various sources
+ */
+public function importFromUrl(string $url): ?LearningMaterial
+{
+    try {
+        // Detect content type from URL
+        $contentType = $this->detectContentType($url);
+        
+        switch ($contentType) {
+            case 'youtube':
+                return $this->importYouTubeVideo($url);
+            case 'vimeo':
+                return $this->importVimeoVideo($url);
+            case 'webpage':
+                return $this->importWebpage($url);
+            default:
+                throw new \Exception('Unsupported content type');
+        }
+    } catch (\Exception $e) {
+        Log::error('Content import failed', [
+            'url' => $url,
+            'error' => $e->getMessage(),
+        ]);
+        return null;
+    }
+}
+
+/**
+ * Export learning material to various formats
+ */
+public function exportMaterial(LearningMaterial $material, string $format): string
+{
+    $processor = app(ContentProcessor::class);
+    
+    switch ($format) {
+        case 'pdf':
+            return $this->exportToPdf($material, $processor);
+        case 'word':
+            return $this->exportToWord($material, $processor);
+        case 'html':
+            return $this->exportToHtml($material, $processor);
+        case 'scorm':
+            return $this->exportToScorm($material, $processor);
+        default:
+            throw new \Exception('Unsupported export format');
+    }
+}
+
+/**
+ * Create material from template
+ */
+public function createFromTemplate(string $templateType, array $data = []): LearningMaterial
+{
+    $templates = [
+        'lecture' => [
+            'content_format' => ContentFormat::RICH_HTML,
+            'allow_latex' => true,
+            'allow_embeds' => true,
+            'content_blocks' => [
+                ['type' => 'heading', 'content' => 'Lecture Title', 'attributes' => ['level' => 1]],
+                ['type' => 'paragraph', 'content' => 'Learning objectives...'],
+                ['type' => 'heading', 'content' => 'Introduction', 'attributes' => ['level' => 2]],
+                ['type' => 'paragraph', 'content' => 'Content goes here...'],
+            ]
+        ],
+        'tutorial' => [
+            'content_format' => ContentFormat::BLOCK_EDITOR,
+            'allow_latex' => false,
+            'allow_embeds' => true,
+            'content_blocks' => [
+                ['type' => 'heading', 'content' => 'Tutorial: ', 'attributes' => ['level' => 1]],
+                ['type' => 'paragraph', 'content' => 'In this tutorial, you will learn...'],
+                ['type' => 'heading', 'content' => 'Step 1', 'attributes' => ['level' => 2]],
+                ['type' => 'paragraph', 'content' => 'First, we need to...'],
+            ]
+        ],
+        'assessment' => [
+            'content_format' => ContentFormat::RICH_HTML,
+            'allow_latex' => true,
+            'allow_embeds' => false,
+            'content_blocks' => [
+                ['type' => 'heading', 'content' => 'Assessment', 'attributes' => ['level' => 1]],
+                ['type' => 'paragraph', 'content' => 'Instructions...'],
+            ]
+        ]
+    ];
+    
+    $template = $templates[$templateType] ?? $templates['lecture'];
+    $materialData = array_merge($template, $data);
+    
+    return $this->createMaterial($materialData);
+}
 }
