@@ -7,7 +7,6 @@ use App\Filament\Resources\LearningMaterialResource\RelationManagers;
 use App\Models\LearningMaterial;
 use App\Enums\ContentFormat;
 use App\Services\ContentProcessor;
-use App\Filament\Components\AdvancedContentEditor;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -23,7 +22,6 @@ use Filament\Forms\Components\Tabs;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Group;
 use Filament\Forms\Components\Placeholder;
-use Filament\Forms\Components\ViewField;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Columns\BooleanColumn;
 use Filament\Tables\Columns\BadgeColumn;
@@ -92,60 +90,46 @@ class LearningMaterialResource extends Resource
                                         ])
                                         ->columns(2),
 
-                                        // RICH HTML EDITOR
-                                        ViewField::make('content_raw')
-                                            ->view('filament.components.tiptap-editor')
-                                            ->viewData([
-                                                'toolbar' => [
-                                                    'heading', 'bold', 'italic', 'underline', 'strike', '|',
-                                                    'bulletList', 'orderedList', '|',
-                                                    'link', 'image', 'video', '|',
-                                                    'blockquote', 'codeBlock', 'table', '|',
-                                                    'latex', 'embed', '|',
-                                                    'source', 'fullscreen'
-                                                ],
-                                                'height' => '500px',
-                                                'allowLatex' => fn(Get $get) => $get('allow_latex'),
-                                                'allowEmbeds' => fn(Get $get) => $get('allow_embeds'),
-                                            ])
-                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::RICH_HTML->value),
+                                                                                 // RICH HTML EDITOR
+                                         Forms\Components\RichEditor::make('content_raw')
+                                             ->label('Content')
+                                             ->toolbarButtons([
+                                                 'attachFiles',
+                                                 'blockquote',
+                                                 'bold',
+                                                 'bulletList',
+                                                 'codeBlock',
+                                                 'h2',
+                                                 'h3',
+                                                 'italic',
+                                                 'link',
+                                                 'orderedList',
+                                                 'redo',
+                                                 'strike',
+                                                 'underline',
+                                                 'undo',
+                                             ])
+                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::RICH_HTML->value),
 
-                                        // MARKDOWN EDITOR
-                                        ViewField::make('content_raw')
-                                            ->view('filament.components.markdown-editor')
-                                            ->viewData([
-                                                'height' => '500px',
-                                                'allowLatex' => fn(Get $get) => $get('allow_latex'),
-                                                'preview' => true,
-                                                'toolbar' => [
-                                                    'bold', 'italic', 'strikethrough', '|',
-                                                    'heading-1', 'heading-2', 'heading-3', '|',
-                                                    'unordered-list', 'ordered-list', '|',
-                                                    'link', 'image', 'table', '|',
-                                                    'code', 'quote', '|',
-                                                    'preview', 'fullscreen'
-                                                ]
-                                            ])
-                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::MARKDOWN->value),
+                                                                                 // MARKDOWN EDITOR
+                                         Forms\Components\Textarea::make('content_raw')
+                                             ->label('Markdown Content')
+                                             ->rows(20)
+                                             ->helperText('Write content using Markdown syntax')
+                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::MARKDOWN->value),
 
-                                        // PLAIN TEXT EDITOR
-                                        Textarea::make('content_raw')
-                                            ->label('Content')
-                                            ->rows(20)
-                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::PLAIN_TEXT->value),
+                                         // PLAIN TEXT EDITOR
+                                         Textarea::make('content_raw')
+                                             ->label('Content')
+                                             ->rows(20)
+                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::PLAIN_TEXT->value),
 
-                                        // BLOCK EDITOR
-                                        ViewField::make('content_blocks')
-                                            ->view('filament.components.block-editor')
-                                            ->viewData([
-                                                'allowedBlocks' => [
-                                                    'paragraph', 'heading', 'image', 'video', 
-                                                    'code', 'quote', 'list', 'latex', 'embed'
-                                                ],
-                                                'allowLatex' => fn(Get $get) => $get('allow_latex'),
-                                                'allowEmbeds' => fn(Get $get) => $get('allow_embeds'),
-                                            ])
-                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::BLOCK_EDITOR->value),
+                                         // BLOCK EDITOR
+                                         Forms\Components\Textarea::make('content_blocks')
+                                             ->label('Content Blocks (JSON)')
+                                             ->rows(20)
+                                             ->helperText('Advanced block editor - JSON format')
+                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::BLOCK_EDITOR->value),
                                     ])
                                     ->columnSpanFull(),
                             ]),
@@ -156,18 +140,12 @@ class LearningMaterialResource extends Resource
                             ->schema([
                                 Section::make('Media Library')
                                     ->schema([
-                                        ViewField::make('embedded_media')
-                                            ->view('filament.components.media-manager')
-                                            ->viewData([
-                                                'allowedTypes' => ['image', 'video', 'audio', 'file'],
-                                                'maxFileSize' => '50MB',
-                                                'acceptedFormats' => [
-                                                    'image' => ['jpg', 'png', 'gif', 'webp', 'svg'],
-                                                    'video' => ['mp4', 'webm', 'ogg'],
-                                                    'audio' => ['mp3', 'wav', 'ogg'],
-                                                    'file' => ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx']
-                                                ]
-                                            ]),
+                                        KeyValue::make('embedded_media')
+                                            ->label('Embedded Media')
+                                            ->keyLabel('Type')
+                                            ->valueLabel('URL/Data')
+                                            ->addActionLabel('Add Media')
+                                            ->helperText('Add images, videos, audio, or files'),
                                     ])
                                     ->columnSpanFull(),
 
@@ -238,12 +216,10 @@ class LearningMaterialResource extends Resource
                             ->schema([
                                 Section::make('Content Preview')
                                     ->schema([
-                                        ViewField::make('content_preview')
-                                            ->view('filament.components.content-preview')
-                                            ->viewData(fn ($record) => [
-                                                'material' => $record,
-                                                'processor' => app(ContentProcessor::class),
-                                            ]),
+                                        Placeholder::make('content_preview')
+                                            ->label('Content Preview')
+                                            ->content('Content preview will be available here')
+                                            ->formatStateUsing(fn ($state) => new \Illuminate\Support\HtmlString($state)),
                                     ])
                                     ->columnSpanFull(),
 
@@ -251,12 +227,7 @@ class LearningMaterialResource extends Resource
                                     ->schema([
                                         Placeholder::make('content_stats')
                                             ->label('Content Statistics')
-                                            ->content(function ($record) {
-                                                if (!$record) return 'No content to analyze';
-                                                
-                                                $stats = app(ContentProcessor::class)->analyzeContent($record);
-                                                return view('filament.components.content-stats', compact('stats'));
-                                            }),
+                                            ->content('Content statistics will be displayed here'),
                                     ])
                                     ->columnSpanFull(),
                             ]),
@@ -382,12 +353,6 @@ class LearningMaterialResource extends Resource
                         $newMaterial->title = $record->title . ' (Copy)';
                         $newMaterial->save();
                     }),
-
-                Tables\Actions\Action::make('preview')
-                    ->label('Preview')
-                    ->icon('heroicon-o-eye')
-                    ->url(fn (LearningMaterial $record): string => route('learning-materials.preview', $record))
-                    ->openUrlInNewTab(),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([

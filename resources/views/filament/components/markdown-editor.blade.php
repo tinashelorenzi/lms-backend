@@ -1,3 +1,8 @@
+@push('scripts')
+<script src="https://unpkg.com/@tiptap/core@2.0.0/dist/index.umd.js"></script>
+<script src="https://unpkg.com/@tiptap/starter-kit@2.0.0/dist/index.umd.js"></script>
+<script src="https://unpkg.com/@tiptap/extension-underline@2.0.0/dist/index.umd.js"></script>
+@endpush
 <div 
     x-data="markdownEditor(@entangle($getStatePath()), {
         height: '{{ $height ?? '500px' }}',
