@@ -58,7 +58,19 @@ class StudentResource extends Resource
                         TextInput::make('studentProfile.student_id')
                             ->label('Student ID')
                             ->required()
-                            ->unique(ignoreRecord: true),
+                            ->unique(table: 'student_profiles', column: 'student_id', ignoreRecord: true)
+                            ->suffixAction(
+                                \Filament\Forms\Components\Actions\Action::make('generate_student_id')
+                                    ->icon('heroicon-m-sparkles')
+                                    ->tooltip('Generate Student ID')
+                                    ->action(function ($state, $set) {
+                                        $lastStudent = \App\Models\StudentProfile::orderBy('id', 'desc')->first();
+                                        $lastNumber = $lastStudent ? (int) substr($lastStudent->student_id, 3) : 0;
+                                        $newNumber = $lastNumber + 1;
+                                        $newStudentId = 'STU' . str_pad($newNumber, 3, '0', STR_PAD_LEFT);
+                                        $set('studentProfile.student_id', $newStudentId);
+                                    })
+                            ),
                         TextInput::make('studentProfile.class_year')
                             ->label('Class Year'),
                         TextInput::make('studentProfile.major')

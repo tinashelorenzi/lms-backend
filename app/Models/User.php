@@ -5,13 +5,15 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens; // Add this import
 use App\Enums\UserType;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, HasApiTokens; // Add HasApiTokens trait
 
     protected $fillable = [
         'name',
@@ -127,78 +129,31 @@ class User extends Authenticatable
     public function enrolledCourses(): BelongsToMany
     {
         return $this->belongsToMany(Course::class, 'course_student', 'student_id', 'course_id')
-            ->withPivot(['academic_year', 'semester', 'enrollment_date', 'status', 'grade'])
+            ->withPivot(['academic_year', 'semester', 'enrollment_status'])
             ->withTimestamps();
     }
 
-    public function assignedClasses(): BelongsToMany
+    /**
+     * Find user by email or student ID
+     */
+    public static function findByEmailOrStudentId(string $identifier): ?self
     {
-        return $this->belongsToMany(SchoolClass::class, 'class_student', 'student_id', 'school_class_id')
-            ->withPivot(['enrollment_date', 'status'])
-            ->withTimestamps();
-    }
-
-    public function activeEnrolledCourses(?string $academicYear = null, ?string $semester = null)
-    {
-        $query = $this->enrolledCourses()->wherePivot('status', 'active');
-        
-        if ($academicYear) {
-            $query->wherePivot('academic_year', $academicYear);
-        }
-        
-        if ($semester) {
-            $query->wherePivot('semester', $semester);
-        }
-        
-        return $query->get();
-    }
-
-    public function currentClass()
-    {
-        return $this->assignedClasses()
-            ->wherePivot('status', 'active')
+        // First try to find by email
+        $user = self::where('email', $identifier)
+            ->where('user_type', UserType::STUDENT)
+            ->where('is_active', true)
             ->first();
-    }
 
-    public function currentTeachingCourses(?string $academicYear = null)
-    {
-        $query = $this->teachingCourses();
-        
-        if ($academicYear) {
-            $query->wherePivot('academic_year', $academicYear);
-        }
-        
-        return $query->get();
-    }
-
-    public static function getStudentsForSelect(): \Illuminate\Support\Collection
-    {
-        return static::byType(UserType::STUDENT)
-            ->with('studentProfile')
-            ->get()
-            ->mapWithKeys(function ($user) {
-                $studentId = $user->studentProfile?->student_id ?? 'No ID';
-                $label = "{$user->name} ({$studentId})";
-                return [$user->id => $label];
-            });
-    }
-
-    public static function searchStudents(string $search = ''): \Illuminate\Support\Collection
-    {
-        return static::byType(UserType::STUDENT)
-            ->with('studentProfile')
-            ->where(function ($query) use ($search) {
-                $query->where('name', 'like', "%{$search}%")
-                    ->orWhereHas('studentProfile', function ($q) use ($search) {
-                        $q->where('student_id', 'like', "%{$search}%");
-                    });
+        // If not found by email, try to find by student ID
+        if (!$user) {
+            $user = self::whereHas('studentProfile', function ($query) use ($identifier) {
+                $query->where('student_id', $identifier);
             })
-            ->get()
-            ->mapWithKeys(function ($user) {
-                $studentId = $user->studentProfile?->student_id ?? 'No ID';
-                $label = "{$user->name} ({$studentId})";
-                return [$user->id => $label];
-            });
+            ->where('user_type', UserType::STUDENT)
+            ->where('is_active', true)
+            ->first();
+        }
+
+        return $user;
     }
 }
-
