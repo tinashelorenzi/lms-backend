@@ -116,4 +116,59 @@ class User extends Authenticatable
     {
         $this->update(['last_login_at' => now()]);
     }
+
+    public function teachingCourses(): BelongsToMany
+    {
+        return $this->belongsToMany(Course::class, 'course_teacher', 'teacher_id', 'course_id')
+            ->withPivot(['academic_year', 'semester', 'is_primary'])
+            ->withTimestamps();
+    }
+    
+    public function enrolledCourses(): BelongsToMany
+    {
+        return $this->belongsToMany(Course::class, 'course_student', 'student_id', 'course_id')
+            ->withPivot(['academic_year', 'semester', 'enrollment_date', 'status', 'grade'])
+            ->withTimestamps();
+    }
+
+    public function assignedClasses(): BelongsToMany
+    {
+        return $this->belongsToMany(SchoolClass::class, 'class_student', 'student_id', 'school_class_id')
+            ->withPivot(['enrollment_date', 'status'])
+            ->withTimestamps();
+    }
+
+    public function activeEnrolledCourses(?string $academicYear = null, ?string $semester = null)
+    {
+        $query = $this->enrolledCourses()->wherePivot('status', 'active');
+        
+        if ($academicYear) {
+            $query->wherePivot('academic_year', $academicYear);
+        }
+        
+        if ($semester) {
+            $query->wherePivot('semester', $semester);
+        }
+        
+        return $query->get();
+    }
+
+    public function currentClass()
+    {
+        return $this->assignedClasses()
+            ->wherePivot('status', 'active')
+            ->first();
+    }
+
+    public function currentTeachingCourses(?string $academicYear = null)
+    {
+        $query = $this->teachingCourses();
+        
+        if ($academicYear) {
+            $query->wherePivot('academic_year', $academicYear);
+        }
+        
+        return $query->get();
+    }
 }
+
