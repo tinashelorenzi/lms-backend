@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\ActivityLogController;
 
 // Public routes (no authentication required)
 Route::prefix('v1')->group(function () {
@@ -25,5 +26,13 @@ Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
         });
         
         // Add more student routes here as needed
+    });
+
+    // Activity Log routes
+    Route::prefix('activity-logs')->group(function () {
+        Route::get('/', [ActivityLogController::class, 'index']);
+        Route::post('/', [ActivityLogController::class, 'store']);
+        Route::get('/statistics', [ActivityLogController::class, 'statistics']);
+        Route::get('/{activityLog}', [ActivityLogController::class, 'show']);
     });
 });
