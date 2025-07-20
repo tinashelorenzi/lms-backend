@@ -11,28 +11,34 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Only create tables if their dependencies exist, otherwise skip this migration
+        // The proper tables will be created by the newer migrations with correct timing
+        
         // Ensure section_materials table exists with proper structure
         if (!Schema::hasTable('section_materials')) {
-            Schema::create('section_materials', function (Blueprint $table) {
-                $table->id();
-                $table->foreignId('section_id')->constrained()->onDelete('cascade');
-                $table->string('learning_material_id'); // MongoDB ObjectId as string
-                $table->integer('order_number')->default(1);
-                $table->boolean('is_required')->default(true);
-                $table->json('completion_criteria')->nullable();
-                $table->json('settings')->nullable();
-                $table->timestamp('available_from')->nullable();
-                $table->timestamp('available_until')->nullable();
-                $table->timestamps();
+            // Only create if sections table exists (dependency check)
+            if (Schema::hasTable('sections')) {
+                Schema::create('section_materials', function (Blueprint $table) {
+                    $table->id();
+                    $table->foreignId('section_id')->constrained()->onDelete('cascade');
+                    $table->string('learning_material_id', 24); // MongoDB ObjectId as string
+                    $table->integer('order_number')->default(1);
+                    $table->boolean('is_required')->default(true);
+                    $table->json('completion_criteria')->nullable();
+                    $table->json('settings')->nullable();
+                    $table->timestamp('available_from')->nullable();
+                    $table->timestamp('available_until')->nullable();
+                    $table->timestamps();
 
-                $table->index(['section_id', 'order_number']);
-                $table->unique(['section_id', 'learning_material_id']);
-            });
+                    $table->index(['section_id', 'order_number']);
+                    $table->unique(['section_id', 'learning_material_id']);
+                });
+            }
         } else {
             // Update existing table if needed
             Schema::table('section_materials', function (Blueprint $table) {
                 if (!Schema::hasColumn('section_materials', 'learning_material_id')) {
-                    $table->string('learning_material_id')->after('section_id');
+                    $table->string('learning_material_id', 24)->after('section_id');
                 }
                 if (!Schema::hasColumn('section_materials', 'order_number')) {
                     $table->integer('order_number')->default(1)->after('learning_material_id');
@@ -52,26 +58,43 @@ return new class extends Migration
                 if (!Schema::hasColumn('section_materials', 'available_until')) {
                     $table->timestamp('available_until')->nullable()->after('available_from');
                 }
+                
+                // Fix the learning_material_id column type if it's wrong
+                $columnType = Schema::getColumnType('section_materials', 'learning_material_id');
+                if ($columnType !== 'string' && $columnType !== 'varchar') {
+                    // Drop foreign key constraint if it exists
+                    try {
+                        $table->dropForeign(['learning_material_id']);
+                    } catch (\Exception $e) {
+                        // Foreign key might not exist, continue
+                    }
+                    
+                    // Change column type to string for MongoDB ObjectId
+                    $table->string('learning_material_id', 24)->change();
+                }
             });
         }
 
         // Ensure course_sections table exists with proper structure
         if (!Schema::hasTable('course_sections')) {
-            Schema::create('course_sections', function (Blueprint $table) {
-                $table->id();
-                $table->foreignId('course_id')->constrained()->onDelete('cascade');
-                $table->foreignId('section_id')->constrained()->onDelete('cascade');
-                $table->integer('order_number')->default(1);
-                $table->enum('status', ['draft', 'open', 'closed', 'automated'])->default('open');
-                $table->json('automation_rules')->nullable();
-                $table->timestamp('opens_at')->nullable();
-                $table->timestamp('closes_at')->nullable();
-                $table->boolean('is_required')->default(true);
-                $table->timestamps();
+            // Only create if both courses and sections tables exist (dependency check)
+            if (Schema::hasTable('courses') && Schema::hasTable('sections')) {
+                Schema::create('course_sections', function (Blueprint $table) {
+                    $table->id();
+                    $table->foreignId('course_id')->constrained()->onDelete('cascade');
+                    $table->foreignId('section_id')->constrained()->onDelete('cascade');
+                    $table->integer('order_number')->default(1);
+                    $table->enum('status', ['draft', 'open', 'closed', 'automated'])->default('open');
+                    $table->json('automation_rules')->nullable();
+                    $table->timestamp('opens_at')->nullable();
+                    $table->timestamp('closes_at')->nullable();
+                    $table->boolean('is_required')->default(true);
+                    $table->timestamps();
 
-                $table->index(['course_id', 'order_number']);
-                $table->unique(['course_id', 'section_id']);
-            });
+                    $table->index(['course_id', 'order_number']);
+                    $table->unique(['course_id', 'section_id']);
+                });
+            }
         } else {
             // Update existing table if needed
             Schema::table('course_sections', function (Blueprint $table) {

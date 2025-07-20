@@ -20,15 +20,29 @@ return new class extends Migration
 
     public function down()
     {
-        Schema::table('course_sections', function (Blueprint $table) {
-            $table->dropColumn([
-                'section_settings',
-                'completion_requirements',
-                'minimum_time_required',
-                'track_time',
-                'prerequisites',
-                'layout_type'
-            ]);
-        });
+        // Check if table exists before trying to drop columns
+        if (Schema::hasTable('course_sections')) {
+            Schema::table('course_sections', function (Blueprint $table) {
+                // Check each column exists before dropping
+                if (Schema::hasColumn('course_sections', 'section_settings')) {
+                    $table->dropColumn('section_settings');
+                }
+                if (Schema::hasColumn('course_sections', 'completion_requirements')) {
+                    $table->dropColumn('completion_requirements');
+                }
+                if (Schema::hasColumn('course_sections', 'minimum_time_required')) {
+                    $table->dropColumn('minimum_time_required');
+                }
+                if (Schema::hasColumn('course_sections', 'track_time')) {
+                    $table->dropColumn('track_time');
+                }
+                if (Schema::hasColumn('course_sections', 'prerequisites')) {
+                    $table->dropColumn('prerequisites');
+                }
+                if (Schema::hasColumn('course_sections', 'layout_type')) {
+                    $table->dropColumn('layout_type');
+                }
+            });
+        }
     }
 };
