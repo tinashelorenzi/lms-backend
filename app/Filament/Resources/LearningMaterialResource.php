@@ -7,6 +7,7 @@ use App\Filament\Resources\LearningMaterialResource\RelationManagers;
 use App\Models\LearningMaterial;
 use App\Enums\ContentFormat;
 use App\Services\ContentProcessor;
+use App\Forms\Components\BlockEditor; // Add this import
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -60,6 +61,17 @@ class LearningMaterialResource extends Resource
                                         Textarea::make('description')
                                             ->rows(2)
                                             ->columnSpanFull(),
+                                        TagsInput::make('tags')
+                                            ->separator(',')
+                                            ->columnSpanFull(),
+                                        Group::make([
+                                            Toggle::make('is_active')
+                                                ->label('Active')
+                                                ->default(true),
+                                            Toggle::make('is_featured')
+                                                ->label('Featured'),
+                                        ])
+                                        ->columns(2),
                                     ])
                                     ->columns(2),
 
@@ -72,11 +84,12 @@ class LearningMaterialResource extends Resource
                                                 ContentFormat::PLAIN_TEXT->value => ContentFormat::PLAIN_TEXT->label(),
                                                 ContentFormat::BLOCK_EDITOR->value => ContentFormat::BLOCK_EDITOR->label(),
                                             ])
-                                            ->default(ContentFormat::RICH_HTML)
+                                            ->default(ContentFormat::RICH_HTML->value)
                                             ->live()
                                             ->afterStateUpdated(function (Set $set, $state) {
                                                 // Clear content when switching formats
                                                 $set('content_raw', '');
+                                                $set('content_blocks', []);
                                             }),
 
                                         Group::make([
@@ -90,308 +103,161 @@ class LearningMaterialResource extends Resource
                                         ])
                                         ->columns(2),
 
-                                                                                 // RICH HTML EDITOR
-                                         Forms\Components\RichEditor::make('content_raw')
-                                             ->label('Content')
-                                             ->toolbarButtons([
-                                                 'attachFiles',
-                                                 'blockquote',
-                                                 'bold',
-                                                 'bulletList',
-                                                 'codeBlock',
-                                                 'h2',
-                                                 'h3',
-                                                 'italic',
-                                                 'link',
-                                                 'orderedList',
-                                                 'redo',
-                                                 'strike',
-                                                 'underline',
-                                                 'undo',
-                                             ])
-                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::RICH_HTML->value),
+                                        // RICH HTML EDITOR
+                                        Forms\Components\RichEditor::make('content_raw')
+                                            ->label('Content')
+                                            ->toolbarButtons([
+                                                'attachFiles',
+                                                'blockquote',
+                                                'bold',
+                                                'bulletList',
+                                                'codeBlock',
+                                                'h2',
+                                                'h3',
+                                                'italic',
+                                                'link',
+                                                'orderedList',
+                                                'redo',
+                                                'strike',
+                                                'underline',
+                                                'undo',
+                                            ])
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::RICH_HTML->value),
 
-                                                                                 // MARKDOWN EDITOR
-                                         Forms\Components\Textarea::make('content_raw')
-                                             ->label('Markdown Content')
-                                             ->rows(20)
-                                             ->helperText('Write content using Markdown syntax')
-                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::MARKDOWN->value),
+                                        // MARKDOWN EDITOR
+                                        Forms\Components\Textarea::make('content_raw')
+                                            ->label('Markdown Content')
+                                            ->rows(20)
+                                            ->helperText('Write content using Markdown syntax')
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::MARKDOWN->value),
 
-                                         // PLAIN TEXT EDITOR
-                                         Textarea::make('content_raw')
-                                             ->label('Content')
-                                             ->rows(20)
-                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::PLAIN_TEXT->value),
+                                        // PLAIN TEXT EDITOR
+                                        Textarea::make('content_raw')
+                                            ->label('Content')
+                                            ->rows(20)
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::PLAIN_TEXT->value),
 
-                                         // BLOCK EDITOR
-                                         Forms\Components\Textarea::make('content_blocks')
-                                             ->label('Content Blocks (JSON)')
-                                             ->rows(20)
-                                             ->helperText('Advanced block editor - JSON format')
-                                             ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::BLOCK_EDITOR->value),
+                                        // BLOCK EDITOR - Replace the Textarea with the custom component
+                                        BlockEditor::make('content_blocks')
+                                            ->label('Content Blocks')
+                                            ->allowLatex(fn (Get $get): bool => $get('allow_latex') ?? false)
+                                            ->allowEmbeds(fn (Get $get): bool => $get('allow_embeds') ?? true)
+                                            ->allowedBlocks([
+                                                'paragraph', 'heading', 'image', 'video', 
+                                                'code', 'quote', 'list', 'latex', 'embed'
+                                            ])
+                                            ->visible(fn (Get $get): bool => $get('content_format') === ContentFormat::BLOCK_EDITOR->value),
                                     ])
                                     ->columnSpanFull(),
                             ]),
 
-                        // MEDIA TAB
-                        Tabs\Tab::make('Embedded Media')
-                            ->icon('heroicon-o-photo')
-                            ->schema([
-                                Section::make('Media Library')
-                                    ->schema([
-                                        KeyValue::make('embedded_media')
-                                            ->label('Embedded Media')
-                                            ->keyLabel('Type')
-                                            ->valueLabel('URL/Data')
-                                            ->addActionLabel('Add Media')
-                                            ->helperText('Add images, videos, audio, or files'),
-                                    ])
-                                    ->columnSpanFull(),
-
-                                Section::make('Video Sources')
-                                    ->schema([
-                                        KeyValue::make('video_sources')
-                                            ->label('External Video URLs')
-                                            ->keyLabel('Platform')
-                                            ->valueLabel('URL')
-                                            ->addActionLabel('Add Video')
-                                            ->helperText('YouTube, Vimeo, Dailymotion, Loom, Google Drive'),
-                                    ])
-                                    ->columnSpanFull(),
-                            ]),
-
-                        // SETTINGS TAB
-                        Tabs\Tab::make('Settings')
+                        // METADATA TAB
+                        Tabs\Tab::make('Metadata')
                             ->icon('heroicon-o-cog-6-tooth')
                             ->schema([
-                                Section::make('Content Settings')
-                                    ->schema([
-                                        TextInput::make('estimated_duration')
-                                            ->label('Estimated Duration (minutes)')
-                                            ->numeric()
-                                            ->minValue(1)
-                                            ->maxValue(999)
-                                            ->helperText('Leave empty for auto-calculation'),
-                                        Toggle::make('is_active')
-                                            ->label('Active')
-                                            ->default(true),
-                                    ])
-                                    ->columns(2),
-
-                                Section::make('Editor Configuration')
+                                Section::make('Content Configuration')
                                     ->schema([
                                         KeyValue::make('editor_config')
-                                            ->label('Editor Settings')
+                                            ->label('Editor Configuration')
                                             ->keyLabel('Setting')
                                             ->valueLabel('Value')
-                                            ->addActionLabel('Add Setting')
-                                            ->helperText('Custom editor configuration options'),
+                                            ->addActionLabel('Add Setting'),
+
+                                        KeyValue::make('embedded_media')
+                                            ->label('Embedded Media')
+                                            ->keyLabel('Media Type')
+                                            ->valueLabel('URL/Data')
+                                            ->addActionLabel('Add Media'),
                                     ])
-                                    ->collapsible()
-                                    ->collapsed(),
+                                    ->columns(1),
 
-                                Section::make('Classification')
-                                    ->schema([
-                                        TagsInput::make('tags')
-                                            ->label('Tags')
-                                            ->placeholder('Add tags for categorization')
-                                            ->suggestions([
-                                                'programming', 'database', 'web-development', 'mobile', 'design',
-                                                'beginner', 'intermediate', 'advanced', 'tutorial', 'theory',
-                                                'practical', 'assignment', 'quiz', 'exercise', 'interactive',
-                                                'video', 'text', 'mixed-media', 'latex', 'mathematics'
-                                            ]),
-                                        KeyValue::make('metadata')
-                                            ->label('Additional Metadata')
-                                            ->keyLabel('Key')
-                                            ->valueLabel('Value')
-                                            ->addActionLabel('Add metadata'),
-                                    ]),
-                            ]),
-
-                        // PREVIEW TAB
-                        Tabs\Tab::make('Preview')
-                            ->icon('heroicon-o-eye')
-                            ->schema([
-                                Section::make('Content Preview')
+                                Section::make('Preview')
                                     ->schema([
                                         Placeholder::make('content_preview')
-                                            ->label('Content Preview')
-                                            ->content('Content preview will be available here')
-                                            ->formatStateUsing(fn ($state) => new \Illuminate\Support\HtmlString($state)),
-                                    ])
-                                    ->columnSpanFull(),
-
-                                Section::make('Statistics')
-                                    ->schema([
-                                        Placeholder::make('content_stats')
-                                            ->label('Content Statistics')
-                                            ->content('Content statistics will be displayed here'),
-                                    ])
-                                    ->columnSpanFull(),
+                                            ->label('Rendered Content')
+                                            ->content(function (LearningMaterial $record = null): string {
+                                                if (!$record) {
+                                                    return 'Save the material to see a preview.';
+                                                }
+                                                
+                                                $processor = app(ContentProcessor::class);
+                                                return $processor->compile($record);
+                                            })
+                                            ->columnSpanFull(),
+                                    ]),
                             ]),
                     ])
-                    ->columnSpanFull()
-                    ->persistTabInQueryString(),
+                    ->columnSpanFull(),
             ]);
     }
 
+    // ... rest of your table and other methods remain the same
     public static function table(Table $table): Table
     {
         return $table
             ->columns([
                 TextColumn::make('title')
                     ->searchable()
-                    ->sortable()
-                    ->weight('medium'),
-                
-                BadgeColumn::make('content_type')
-                    ->label('Type')
-                    ->colors([
-                        'primary' => 'text',
-                        'success' => 'video',
-                        'warning' => 'mixed',
-                        'gray' => 'empty',
-                    ])
-                    ->icons([
-                        'heroicon-o-document-text' => 'text',
-                        'heroicon-o-play-circle' => 'video',
-                        'heroicon-o-squares-plus' => 'mixed',
-                        'heroicon-o-exclamation-triangle' => 'empty',
-                    ]),
-
+                    ->sortable(),
                 BadgeColumn::make('content_format')
                     ->label('Format')
                     ->colors([
                         'primary' => ContentFormat::RICH_HTML->value,
-                        'info' => ContentFormat::MARKDOWN->value,
-                        'gray' => ContentFormat::PLAIN_TEXT->value,
-                        'warning' => ContentFormat::BLOCK_EDITOR->value,
-                    ])
-                    ->formatStateUsing(fn ($state) => $state instanceof ContentFormat ? $state->label() : ContentFormat::from($state)->label()),
-
-                TextColumn::make('estimated_time')
-                    ->label('Duration')
-                    ->suffix(' min')
-                    ->sortable(),
-
-                TextColumn::make('sections_count')
-                    ->counts('sections')
-                    ->label('Used in Sections')
-                    ->badge()
-                    ->color('gray'),
-
+                        'success' => ContentFormat::MARKDOWN->value,
+                        'warning' => ContentFormat::PLAIN_TEXT->value,
+                        'info' => ContentFormat::BLOCK_EDITOR->value,
+                    ]),
                 TextColumn::make('tags')
                     ->badge()
-                    ->separator(',')
-                    ->limit(3)
-                    ->toggleable(),
-
+                    ->separator(','),
                 BooleanColumn::make('allow_latex')
-                    ->label('LaTeX')
-                    ->toggleable(isToggledHiddenByDefault: true),
-
+                    ->label('LaTeX'),
                 BooleanColumn::make('allow_embeds')
-                    ->label('Embeds')
-                    ->toggleable(isToggledHiddenByDefault: true),
-
+                    ->label('Embeds'),
                 BooleanColumn::make('is_active')
-                    ->sortable(),
-
+                    ->label('Active'),
+                BooleanColumn::make('is_featured')
+                    ->label('Featured'),
                 TextColumn::make('created_at')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('updated_at')
                     ->dateTime()
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('content_format')
-                    ->label('Format')
                     ->options([
                         ContentFormat::RICH_HTML->value => ContentFormat::RICH_HTML->label(),
                         ContentFormat::MARKDOWN->value => ContentFormat::MARKDOWN->label(),
                         ContentFormat::PLAIN_TEXT->value => ContentFormat::PLAIN_TEXT->label(),
                         ContentFormat::BLOCK_EDITOR->value => ContentFormat::BLOCK_EDITOR->label(),
                     ]),
-
-                SelectFilter::make('content_type')
-                    ->label('Content Type')
-                    ->options([
-                        'text' => 'Text Only',
-                        'video' => 'Video Only',
-                        'mixed' => 'Mixed Content',
-                        'empty' => 'Empty',
-                    ]),
-
-                TernaryFilter::make('allow_latex')
-                    ->label('LaTeX Enabled'),
-
-                TernaryFilter::make('allow_embeds')
-                    ->label('Embeds Enabled'),
-
-                TernaryFilter::make('is_active')
-                    ->label('Active Status'),
-
-                Tables\Filters\Filter::make('unused')
-                    ->label('Unused Materials')
-                    ->query(fn (Builder $query): Builder => $query->doesntHave('sections')),
-
-                Tables\Filters\Filter::make('has_video')
-                    ->label('Contains Video')
-                    ->query(fn (Builder $query): Builder => $query->withVideo()),
+                TernaryFilter::make('allow_latex'),
+                TernaryFilter::make('allow_embeds'),
+                TernaryFilter::make('is_active'),
+                TernaryFilter::make('is_featured'),
             ])
             ->actions([
-                Tables\Actions\ViewAction::make(),
                 Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make(),
-                
-                Tables\Actions\Action::make('duplicate')
-                    ->label('Duplicate')
-                    ->icon('heroicon-o-document-duplicate')
-                    ->action(function (LearningMaterial $record) {
-                        $newMaterial = $record->replicate();
-                        $newMaterial->title = $record->title . ' (Copy)';
-                        $newMaterial->save();
-                    }),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
                     Tables\Actions\DeleteBulkAction::make(),
-                    
                     BulkAction::make('activate')
-                        ->label('Activate')
-                        ->icon('heroicon-o-check')
-                        ->action(fn (Collection $records) => $records->each(fn ($record) => $record->update(['is_active' => true]))),
-                    
+                        ->label('Activate Selected')
+                        ->icon('heroicon-m-check')
+                        ->action(fn (Collection $records) => 
+                            $records->each->update(['is_active' => true])
+                        ),
                     BulkAction::make('deactivate')
-                        ->label('Deactivate')
-                        ->icon('heroicon-o-x-mark')
-                        ->action(fn (Collection $records) => $records->each(fn ($record) => $record->update(['is_active' => false]))),
-
-                    BulkAction::make('enable_latex')
-                        ->label('Enable LaTeX')
-                        ->icon('heroicon-o-variable')
-                        ->action(fn (Collection $records) => $records->each(fn ($record) => $record->update(['allow_latex' => true]))),
-
-                    BulkAction::make('convert_format')
-                        ->label('Convert Format')
-                        ->icon('heroicon-o-arrow-path')
-                        ->form([
-                            Select::make('target_format')
-                                ->label('Target Format')
-                                ->options([
-                                    ContentFormat::RICH_HTML->value => ContentFormat::RICH_HTML->label(),
-                                    ContentFormat::MARKDOWN->value => ContentFormat::MARKDOWN->label(),
-                                    ContentFormat::PLAIN_TEXT->value => ContentFormat::PLAIN_TEXT->label(),
-                                ])
-                                ->required(),
-                        ])
-                        ->action(function (Collection $records, array $data) {
-                            $processor = app(ContentProcessor::class);
-                            $records->each(function ($record) use ($processor, $data) {
-                                $processor->convertFormat($record, ContentFormat::from($data['target_format']));
-                            });
-                        }),
+                        ->label('Deactivate Selected')
+                        ->icon('heroicon-m-x-mark')
+                        ->action(fn (Collection $records) => 
+                            $records->each->update(['is_active' => false])
+                        ),
                 ]),
             ]);
     }
@@ -409,7 +275,6 @@ class LearningMaterialResource extends Resource
             'index' => Pages\ListLearningMaterials::route('/'),
             'create' => Pages\CreateLearningMaterial::route('/create'),
             'edit' => Pages\EditLearningMaterial::route('/{record}/edit'),
-            'view' => Pages\ViewLearningMaterial::route('/{record}'),
         ];
     }
 }

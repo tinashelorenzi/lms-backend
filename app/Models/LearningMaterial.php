@@ -38,7 +38,6 @@ class LearningMaterial extends Model
         'is_active' => 'boolean',
         'allow_latex' => 'boolean',
         'allow_embeds' => 'boolean',
-        'content_format' => ContentFormat::class,
     ];
 
     /**
@@ -128,7 +127,7 @@ class LearningMaterial extends Model
      */
     public function scopeByFormat(Builder $query, ContentFormat $format): Builder
     {
-        return $query->where('content_format', $format);
+        return $query->where('content_format', $format->value);
     }
 
     /**
@@ -145,5 +144,25 @@ class LearningMaterial extends Model
     public function scopeWithLatex(Builder $query): Builder
     {
         return $query->where('allow_latex', true);
+    }
+
+    /**
+     * Get the content format as enum
+     */
+    public function getContentFormatEnumAttribute(): ?ContentFormat
+    {
+        return $this->content_format ? ContentFormat::from($this->content_format) : null;
+    }
+
+    /**
+     * Set the content format from enum
+     */
+    public function setContentFormatAttribute($value): void
+    {
+        if ($value instanceof ContentFormat) {
+            $this->attributes['content_format'] = $value->value;
+        } else {
+            $this->attributes['content_format'] = $value;
+        }
     }
 }

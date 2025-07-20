@@ -4,34 +4,31 @@ namespace App\Enums;
 
 enum SectionStatus: string
 {
-    case CLOSED = 'closed';
+    case DRAFT = 'draft';
     case OPEN = 'open';
+    case CLOSED = 'closed';
     case AUTOMATED = 'automated';
-    
+    case ARCHIVED = 'archived';
+
     public function label(): string
     {
         return match($this) {
-            self::CLOSED => 'Closed',
+            self::DRAFT => 'Draft',
             self::OPEN => 'Open',
+            self::CLOSED => 'Closed',
             self::AUTOMATED => 'Automated',
+            self::ARCHIVED => 'Archived',
         };
     }
-    
-    public function description(): string
-    {
-        return match($this) {
-            self::CLOSED => 'Section is closed to students',
-            self::OPEN => 'Section is open to all students',
-            self::AUTOMATED => 'Section opens based on automation rules',
-        };
-    }
-    
+
     public function color(): string
     {
         return match($this) {
-            self::CLOSED => 'danger',
+            self::DRAFT => 'gray',
             self::OPEN => 'success',
+            self::CLOSED => 'danger',
             self::AUTOMATED => 'warning',
+            self::ARCHIVED => 'secondary',
         };
     }
 }

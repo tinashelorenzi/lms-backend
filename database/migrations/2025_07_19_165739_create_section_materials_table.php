@@ -6,15 +6,15 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    public function up(): void
+    public function up()
     {
         Schema::create('section_materials', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('section_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('learning_material_id')->constrained()->cascadeOnDelete();
-            $table->integer('order_number')->default(1); // Order within the section
+            $table->foreignId('section_id')->constrained()->onDelete('cascade');
+            $table->foreignId('learning_material_id')->constrained()->onDelete('cascade');
+            $table->integer('order_number')->default(1);
             $table->boolean('is_required')->default(true);
-            $table->json('completion_criteria')->nullable(); // Custom completion rules
+            $table->json('completion_criteria')->nullable();
             $table->timestamps();
             
             $table->unique(['section_id', 'learning_material_id']);
@@ -22,7 +22,7 @@ return new class extends Migration
         });
     }
 
-    public function down(): void
+    public function down()
     {
         Schema::dropIfExists('section_materials');
     }

@@ -19,11 +19,11 @@ use Filament\Tables\Columns\BooleanColumn;
 use Filament\Tables\Columns\BadgeColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 class MaterialsRelationManager extends RelationManager
 {
     protected static string $relationship = 'materials';
+    protected static ?string $recordTitleAttribute = 'title';
 
     public function form(Form $form): Form
     {
@@ -44,25 +44,33 @@ class MaterialsRelationManager extends RelationManager
                             ->options([
                                 LearningMaterialType::TEXT->value => LearningMaterialType::TEXT->label(),
                                 LearningMaterialType::VIDEO->value => LearningMaterialType::VIDEO->label(),
+                                LearningMaterialType::QUIZ->value => LearningMaterialType::QUIZ->label(),
+                                LearningMaterialType::FILE->value => LearningMaterialType::FILE->label(),
+                                LearningMaterialType::LINK->value => LearningMaterialType::LINK->label(),
                             ])
                             ->required(),
+                        Toggle::make('is_active')
+                            ->default(true),
                     ])
                     ->createOptionUsing(function (array $data) {
                         return LearningMaterial::create($data)->id;
                     }),
+                
                 TextInput::make('order_number')
                     ->label('Order')
                     ->numeric()
-                    ->default(1)
+                    ->default(fn() => $this->getOwnerRecord()->materials()->count() + 1)
                     ->required(),
+                
                 Toggle::make('is_required')
-                    ->label('Required')
+                    ->label('Required Material')
                     ->default(true),
+                
                 KeyValue::make('completion_criteria')
                     ->label('Completion Criteria')
-                    ->keyLabel('Criteria')
+                    ->keyLabel('Criterion')
                     ->valueLabel('Value')
-                    ->addActionLabel('Add criteria'),
+                    ->columnSpanFull(),
             ]);
     }
 
@@ -71,6 +79,10 @@ class MaterialsRelationManager extends RelationManager
         return $table
             ->recordTitleAttribute('title')
             ->columns([
+                TextColumn::make('order_number')
+                    ->label('#')
+                    ->sortable()
+                    ->alignCenter(),
                 TextColumn::make('title')
                     ->searchable()
                     ->sortable(),
@@ -78,78 +90,54 @@ class MaterialsRelationManager extends RelationManager
                     ->colors([
                         'primary' => LearningMaterialType::TEXT->value,
                         'success' => LearningMaterialType::VIDEO->value,
-                    ])
-                    ->icons([
-                        'heroicon-o-document-text' => LearningMaterialType::TEXT->value,
-                        'heroicon-o-play-circle' => LearningMaterialType::VIDEO->value,
-                    ])
-                    ->formatStateUsing(fn ($state) => $state ? LearningMaterialType::from($state)->label() : 'Unknown'),
-                TextColumn::make('video_platform')
-                    ->label('Platform')
-                    ->badge()
-                    ->colors([
-                        'danger' => 'youtube',
-                        'primary' => 'vimeo',
-                        'warning' => 'dailymotion',
-                        'success' => 'loom',
-                        'info' => 'google_drive',
-                    ])
-                    ->visible(fn ($record) => $record && $record->type === LearningMaterialType::VIDEO),
-                TextColumn::make('pivot.order_number')
-                    ->label('Order')
-                    ->sortable(),
+                        'warning' => LearningMaterialType::QUIZ->value,
+                        'info' => LearningMaterialType::FILE->value,
+                        'secondary' => LearningMaterialType::LINK->value,
+                    ]),
+                BooleanColumn::make('is_required')
+                    ->label('Required'),
                 TextColumn::make('estimated_duration')
                     ->label('Duration (min)')
-                    ->sortable(),
-                BooleanColumn::make('pivot.is_required')
-                    ->label('Required')
-                    ->sortable(),
+                    ->alignCenter()
+                    ->toggleable(),
                 BooleanColumn::make('is_active')
-                    ->sortable(),
+                    ->toggleable(),
             ])
             ->filters([
                 SelectFilter::make('type')
                     ->options([
                         LearningMaterialType::TEXT->value => LearningMaterialType::TEXT->label(),
                         LearningMaterialType::VIDEO->value => LearningMaterialType::VIDEO->label(),
+                        LearningMaterialType::QUIZ->value => LearningMaterialType::QUIZ->label(),
+                        LearningMaterialType::FILE->value => LearningMaterialType::FILE->label(),
+                        LearningMaterialType::LINK->value => LearningMaterialType::LINK->label(),
                     ]),
-                Tables\Filters\TernaryFilter::make('pivot.is_required')
-                    ->label('Required Status'),
             ])
             ->headerActions([
+                Tables\Actions\CreateAction::make()
+                    ->label('Add Material'),
                 Tables\Actions\AttachAction::make()
+                    ->preloadRecordSelect()
+                    ->recordSelectOptionsQuery(fn (Builder $query) => $query->active())
                     ->form(fn (Tables\Actions\AttachAction $action): array => [
                         $action->getRecordSelect(),
                         TextInput::make('order_number')
                             ->label('Order')
                             ->numeric()
-                            ->default(1)
+                            ->default(fn() => $this->getOwnerRecord()->materials()->count() + 1)
                             ->required(),
                         Toggle::make('is_required')
-                            ->label('Required')
+                            ->label('Required Material')
                             ->default(true),
                         KeyValue::make('completion_criteria')
                             ->label('Completion Criteria')
-                            ->keyLabel('Criteria')
-                            ->valueLabel('Value')
-                            ->addActionLabel('Add criteria'),
+                            ->keyLabel('Criterion')
+                            ->valueLabel('Value'),
                     ]),
             ])
             ->actions([
-                Tables\Actions\EditAction::make()
-                    ->form(fn (Tables\Actions\EditAction $action): array => [
-                        TextInput::make('order_number')
-                            ->label('Order')
-                            ->numeric()
-                            ->required(),
-                        Toggle::make('is_required')
-                            ->label('Required'),
-                        KeyValue::make('completion_criteria')
-                            ->label('Completion Criteria')
-                            ->keyLabel('Criteria')
-                            ->valueLabel('Value')
-                            ->addActionLabel('Add criteria'),
-                    ]),
+                Tables\Actions\ViewAction::make(),
+                Tables\Actions\EditAction::make(),
                 Tables\Actions\DetachAction::make(),
             ])
             ->bulkActions([
@@ -157,6 +145,7 @@ class MaterialsRelationManager extends RelationManager
                     Tables\Actions\DetachBulkAction::make(),
                 ]),
             ])
-            ->defaultSort('pivot.order_number', 'asc');
+            ->reorderable('order_number')
+            ->defaultSort('order_number');
     }
 }
