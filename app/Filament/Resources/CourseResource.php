@@ -52,97 +52,143 @@ class CourseResource extends Resource
                                     ->schema([
                                         TextInput::make('name')
                                             ->required()
-                                            ->maxLength(255)
-                                            ->columnSpanFull(),
+                                            ->maxLength(255),
                                         TextInput::make('code')
                                             ->required()
-                                            ->unique(ignoreRecord: true)
-                                            ->maxLength(255)
-                                            ->columnSpan(1),
-                                        TextInput::make('credits')
-                                            ->required()
-                                            ->numeric()
-                                            ->default(3)
-                                            ->minValue(1)
-                                            ->maxValue(10)
-                                            ->columnSpan(1),
+                                            ->maxLength(50)
+                                            ->unique(ignoreRecord: true),
                                         Textarea::make('description')
-                                            ->rows(3)
-                                            ->columnSpanFull(),
+                                            ->rows(3),
+                                        TextInput::make('credits')
+                                            ->numeric()
+                                            ->required(),
                                         TextInput::make('department')
-                                            ->maxLength(255)
-                                            ->columnSpan(1),
+                                            ->required()
+                                            ->maxLength(255),
                                         Toggle::make('is_active')
-                                            ->default(true)
-                                            ->columnSpan(1),
+                                            ->default(true),
                                     ])
                                     ->columns(2),
                             ]),
 
-                        // SECTIONS TAB
-                        Tabs\Tab::make('Course Sections')
-                            ->icon('heroicon-o-rectangle-stack')
+                        // SECTIONS TAB - FIXED VERSION
+                        Tabs\Tab::make('Sections')
+                            ->icon('heroicon-o-squares-2x2')
                             ->schema([
-                                Repeater::make('courseSections')
-                                    ->relationship('sections')
+                                FormSection::make('Course Sections')
+                                    ->description('Configure sections for this course')
                                     ->schema([
-                                        Select::make('section_id')
-                                            ->label('Section')
-                                            ->options(Section::active()->pluck('title', 'id'))
-                                            ->required()
-                                            ->searchable()
-                                            ->createOptionForm([
-                                                TextInput::make('title')
+                                        Repeater::make('sections')
+                                            ->relationship('sections')
+                                            ->schema([
+                                                Select::make('section_id')
+                                                    ->label('Section')
+                                                    ->options(function () {
+                                                        // Fixed: Ensure we get proper key-value pairs with non-null labels
+                                                        return Section::active()
+                                                            ->whereNotNull('title')
+                                                            ->where('title', '!=', '')
+                                                            ->pluck('title', 'id')
+                                                            ->filter(); // Remove any null values
+                                                    })
                                                     ->required()
-                                                    ->maxLength(255),
-                                                Textarea::make('description')
-                                                    ->rows(2),
-                                                Textarea::make('objectives')
-                                                    ->label('Learning Objectives')
-                                                    ->rows(3),
-                                                TextInput::make('estimated_duration')
+                                                    ->searchable()
+                                                    ->createOptionForm([
+                                                        TextInput::make('title')
+                                                            ->required()
+                                                            ->maxLength(255),
+                                                        Textarea::make('description')
+                                                            ->rows(2),
+                                                        Textarea::make('objectives')
+                                                            ->label('Learning Objectives')
+                                                            ->rows(3),
+                                                        TextInput::make('estimated_duration')
+                                                            ->numeric()
+                                                            ->suffix('minutes'),
+                                                        Toggle::make('is_active')
+                                                            ->default(true),
+                                                    ])
+                                                    ->createOptionUsing(function (array $data) {
+                                                        return Section::create($data)->id;
+                                                    }),
+                                                
+                                                TextInput::make('order_number')
+                                                    ->label('Order')
                                                     ->numeric()
-                                                    ->suffix('minutes'),
-                                                Toggle::make('is_active')
+                                                    ->required()
+                                                    ->default(1),
+                                                
+                                                Select::make('status')
+                                                    ->options([
+                                                        SectionStatus::DRAFT->value => SectionStatus::DRAFT->label(),
+                                                        SectionStatus::OPEN->value => SectionStatus::OPEN->label(),
+                                                        SectionStatus::CLOSED->value => SectionStatus::CLOSED->label(),
+                                                        SectionStatus::AUTOMATED->value => SectionStatus::AUTOMATED->label(),
+                                                    ])
+                                                    ->default(SectionStatus::OPEN->value)
+                                                    ->required(),
+                                                
+                                                Toggle::make('is_required')
+                                                    ->label('Required Section')
                                                     ->default(true),
+                                                
+                                                DateTimePicker::make('opens_at')
+                                                    ->label('Opens At'),
+                                                
+                                                DateTimePicker::make('closes_at')
+                                                    ->label('Closes At'),
                                             ])
-                                            ->createOptionUsing(function (array $data) {
-                                                return Section::create($data)->id;
-                                            }),
-                                        
-                                        TextInput::make('order_number')
-                                            ->label('Order')
-                                            ->numeric()
-                                            ->default(1)
-                                            ->required()
-                                            ->columnSpan(1),
-                                        
-                                        Select::make('status')
-                                            ->options(collect(SectionStatus::cases())
-                                                ->mapWithKeys(fn($case) => [$case->value => $case->label()]))
-                                            ->default(SectionStatus::DRAFT->value)
-                                            ->required()
-                                            ->columnSpan(1),
-                                        
-                                        Toggle::make('is_required')
-                                            ->default(true)
-                                            ->columnSpan(1),
-                                        
-                                        DateTimePicker::make('opens_at')
-                                            ->label('Opens At')
-                                            ->columnSpan(1),
-                                        
-                                        DateTimePicker::make('closes_at')
-                                            ->label('Closes At')
-                                            ->columnSpan(1),
+                                            ->columnSpan(2)
+                                            ->orderColumn('order_number')
+                                            ->reorderable(true)
+                                            ->collapsible()
+                                            ->itemLabel(fn (array $state): ?string => $state['title'] ?? 'New Section')
+                                            ->addActionLabel('Add Section'),
                                     ])
-                                    ->columns(3)
-                                    ->defaultItems(1)
-                                    ->reorderable('order_number')
-                                    ->collapsible()
-                                    ->itemLabel(fn (array $state): ?string => 
-                                        Section::find($state['section_id'])?->title ?? 'New Section'
-                                    ),
+                                    ->columnSpan(2),
+                            ]),
+
+                        // ENROLLMENT TAB
+                        Tabs\Tab::make('Enrollment')
+                            ->icon('heroicon-o-users')
+                            ->schema([
+                                FormSection::make('Teachers')
+                                    ->schema([
+                                        Repeater::make('teachers')
+                                            ->relationship('teachers')
+                                            ->schema([
+                                                Select::make('teacher_id')
+                                                    ->label('Teacher')
+                                                    ->options(function () {
+                                                        return User::where('user_type', UserType::TEACHER)
+                                                            ->whereNotNull('name')
+                                                            ->where('name', '!=', '')
+                                                            ->pluck('name', 'id')
+                                                            ->filter();
+                                                    })
+                                                    ->required()
+                                                    ->searchable(),
+                                                
+                                                TextInput::make('academic_year')
+                                                    ->default(now()->year)
+                                                    ->required(),
+                                                
+                                                Select::make('semester')
+                                                    ->options([
+                                                        'fall' => 'Fall',
+                                                        'spring' => 'Spring',
+                                                        'summer' => 'Summer',
+                                                    ])
+                                                    ->default('fall')
+                                                    ->required(),
+                                                
+                                                Toggle::make('is_primary')
+                                                    ->label('Primary Teacher')
+                                                    ->default(false),
+                                            ])
+                                            ->columnSpan(2)
+                                            ->addActionLabel('Add Teacher'),
+                                    ]),
                             ]),
                     ])
                     ->columnSpanFull(),
@@ -153,15 +199,14 @@ class CourseResource extends Resource
     {
         return $table
             ->columns([
-                TextColumn::make('name')
+                TextColumn::make('code')
                     ->searchable()
                     ->sortable(),
-                TextColumn::make('code')
+                TextColumn::make('name')
                     ->searchable()
                     ->sortable(),
                 TextColumn::make('department')
                     ->searchable()
-                    ->sortable()
                     ->toggleable(),
                 TextColumn::make('credits')
                     ->sortable()
@@ -170,11 +215,12 @@ class CourseResource extends Resource
                     ->label('Sections')
                     ->counts('sections')
                     ->color('primary'),
-                BadgeColumn::make('total_materials_count')
-                    ->label('Materials')
+                BadgeColumn::make('teachers_count')
+                    ->label('Teachers')
+                    ->counts('teachers')
                     ->color('success'),
                 BooleanColumn::make('is_active')
-                    ->sortable(),
+                    ->label('Active'),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable()
@@ -182,9 +228,15 @@ class CourseResource extends Resource
             ])
             ->filters([
                 TernaryFilter::make('is_active')
-                    ->label('Status'),
+                    ->label('Active Courses'),
                 SelectFilter::make('department')
-                    ->options(Course::distinct('department')->pluck('department', 'department')),
+                    ->options(function () {
+                        return Course::distinct('department')
+                            ->whereNotNull('department')
+                            ->where('department', '!=', '')
+                            ->pluck('department', 'department')
+                            ->filter();
+                    }),
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
@@ -201,8 +253,6 @@ class CourseResource extends Resource
     {
         return [
             RelationManagers\SectionsRelationManager::class,
-            RelationManagers\TeachersRelationManager::class,
-            RelationManagers\StudentsRelationManager::class,
         ];
     }
 

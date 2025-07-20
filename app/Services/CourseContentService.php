@@ -5,289 +5,477 @@ namespace App\Services;
 use App\Models\Course;
 use App\Models\Section;
 use App\Models\SectionMaterial;
-use App\Models\MongoLearningMaterial;
-use App\Models\MongoCourseContent;
-use App\Models\StudentProgress;
+use App\Models\LearningMaterial;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CourseContentService
 {
     /**
-     * Get all materials for a course with MongoDB content
+     * Get course structure with materials
+     */
+    public function getCourseStructure(int $courseId): array
+    {
+        try {
+            // Get course and sections from MySQL
+            $course = Course::with(['sections' => function ($query) {
+                $query->orderBy('course_sections.order_number');
+            }])->findOrFail($courseId);
+
+            // Get material IDs from pivot table
+            $materialIds = DB::table('section_materials')
+                ->join('course_sections', 'section_materials.section_id', '=', 'course_sections.section_id')
+                ->where('course_sections.course_id', $courseId)
+                ->pluck('section_materials.learning_material_id')
+                ->toArray();
+
+            // Get materials from MongoDB - FIXED to handle MongoDB properly
+            $materials = collect();
+            if (!empty($materialIds)) {
+                try {
+                    $mongoMaterials = LearningMaterial::whereIn('_id', $materialIds)->get();
+                    $materials = $mongoMaterials->keyBy('_id');
+                } catch (\Exception $e) {
+                    Log::warning('Failed to fetch MongoDB materials', [
+                        'material_ids' => $materialIds,
+                        'error' => $e->getMessage()
+                    ]);
+                    $materials = collect();
+                }
+            }
+
+            // Structure the data
+            $sections = $course->sections->map(function ($section) use ($materials) {
+                $sectionMaterials = DB::table('section_materials')
+                    ->where('section_id', $section->id)
+                    ->orderBy('order_number')
+                    ->get();
+
+                $section->materials = $sectionMaterials->map(function ($pivot) use ($materials) {
+                    $material = $materials->get($pivot->learning_material_id);
+                    if ($material) {
+                        $material->pivot = $pivot;
+                        return $material;
+                    }
+                    return null;
+                })->filter();
+
+                return $section;
+            });
+
+            return [
+                'course' => $course,
+                'sections' => $sections,
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error getting course structure', [
+                'course_id' => $courseId,
+                'error' => $e->getMessage()
+            ]);
+            
+            return [
+                'course' => null,
+                'sections' => collect(),
+            ];
+        }
+    }
+
+    /**
+     * Add material to section - FIXED
+     */
+    public function addMaterialToSection(int $sectionId, string $materialId, int $orderNumber = null, array $pivotData = []): bool
+    {
+        try {
+            // Check if material exists in MongoDB
+            $material = LearningMaterial::find($materialId);
+            if (!$material) {
+                Log::warning('Material not found in MongoDB', ['material_id' => $materialId]);
+                return false;
+            }
+
+            // Check if section exists in MySQL
+            $section = Section::find($sectionId);
+            if (!$section) {
+                Log::warning('Section not found in MySQL', ['section_id' => $sectionId]);
+                return false;
+            }
+
+            // Determine order number if not provided
+            if ($orderNumber === null) {
+                $orderNumber = DB::table('section_materials')
+                    ->where('section_id', $sectionId)
+                    ->max('order_number') ?? 0;
+                $orderNumber++;
+            }
+
+            // Insert into pivot table
+            $inserted = DB::table('section_materials')->insert([
+                'section_id' => $sectionId,
+                'learning_material_id' => $materialId,
+                'order_number' => $orderNumber,
+                'is_required' => $pivotData['is_required'] ?? true,
+                'completion_criteria' => json_encode($pivotData['completion_criteria'] ?? []),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            if ($inserted) {
+                Log::info('Material added to section', [
+                    'section_id' => $sectionId,
+                    'material_id' => $materialId,
+                    'order_number' => $orderNumber
+                ]);
+            }
+
+            return $inserted;
+        } catch (\Exception $e) {
+            Log::error('Error adding material to section', [
+                'section_id' => $sectionId,
+                'material_id' => $materialId,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Get all materials for a course with MongoDB content - FIXED
      */
     public function getCourseMaterials(Course $course): Collection
     {
-        $sections = $course->sections()->with('materials')->get();
-        
-        $materials = collect();
-        
-        foreach ($sections as $section) {
-            $sectionMaterials = $section->materials;
+        try {
+            $sections = $course->sections()->with(['sections' => function($query) {
+                // Load section details but handle the relationship carefully
+            }])->get();
             
-            foreach ($sectionMaterials as $sectionMaterial) {
-                // Get the MongoDB material content
-                $mongoMaterial = MongoLearningMaterial::find($sectionMaterial->learning_material_id);
+            $materials = collect();
+            
+            foreach ($sections as $section) {
+                // Get section materials from pivot table
+                $sectionMaterials = DB::table('section_materials')
+                    ->where('section_id', $section->id)
+                    ->orderBy('order_number')
+                    ->get();
                 
-                if ($mongoMaterial) {
-                    $material = (object) array_merge(
-                        $sectionMaterial->toArray(),
-                        [
-                            'mongo_content' => $mongoMaterial,
-                            'content_html' => $mongoMaterial->content_html ?? '',
-                            'statistics' => $mongoMaterial->getStatistics(),
-                        ]
-                    );
-                    
-                    $materials->push($material);
+                foreach ($sectionMaterials as $sectionMaterial) {
+                    // Get the MongoDB material content
+                    try {
+                        $mongoMaterial = LearningMaterial::find($sectionMaterial->learning_material_id);
+                        
+                        if ($mongoMaterial) {
+                            $material = (object) array_merge(
+                                (array) $sectionMaterial,
+                                [
+                                    'mongo_content' => $mongoMaterial,
+                                    'title' => $mongoMaterial->title,
+                                    'description' => $mongoMaterial->description,
+                                    'content_type' => $mongoMaterial->content_type,
+                                    'content_data' => $mongoMaterial->content_data,
+                                    'statistics' => $mongoMaterial->getStatistics(),
+                                ]
+                            );
+                            
+                            $materials->push($material);
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Failed to fetch material from MongoDB', [
+                            'material_id' => $sectionMaterial->learning_material_id,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
                 }
             }
+            
+            return $materials;
+        } catch (\Exception $e) {
+            Log::error('Error getting course materials', [
+                'course_id' => $course->id,
+                'error' => $e->getMessage()
+            ]);
+            return collect();
         }
-        
-        return $materials;
     }
 
     /**
-     * Get materials for a specific section
+     * Get materials for a specific section - FIXED
      */
     public function getSectionMaterials(Section $section): Collection
     {
-        $sectionMaterials = $section->materials;
-        $materials = collect();
-        
-        foreach ($sectionMaterials as $sectionMaterial) {
-            $mongoMaterial = MongoLearningMaterial::find($sectionMaterial->learning_material_id);
+        try {
+            // Get section materials from pivot table
+            $sectionMaterials = DB::table('section_materials')
+                ->where('section_id', $section->id)
+                ->orderBy('order_number')
+                ->get();
             
-            if ($mongoMaterial) {
-                $material = (object) array_merge(
-                    $sectionMaterial->toArray(),
-                    [
-                        'mongo_content' => $mongoMaterial,
-                        'content_html' => $mongoMaterial->content_html ?? '',
-                        'statistics' => $mongoMaterial->getStatistics(),
-                    ]
-                );
-                
-                $materials->push($material);
+            $materials = collect();
+            
+            foreach ($sectionMaterials as $sectionMaterial) {
+                try {
+                    $mongoMaterial = LearningMaterial::find($sectionMaterial->learning_material_id);
+                    
+                    if ($mongoMaterial) {
+                        $material = (object) array_merge(
+                            (array) $sectionMaterial,
+                            [
+                                'mongo_content' => $mongoMaterial,
+                                'title' => $mongoMaterial->title,
+                                'description' => $mongoMaterial->description,
+                                'content_type' => $mongoMaterial->content_type,
+                                'content_data' => $mongoMaterial->content_data,
+                                'statistics' => $mongoMaterial->getStatistics(),
+                            ]
+                        );
+                        
+                        $materials->push($material);
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Failed to fetch material from MongoDB', [
+                        'material_id' => $sectionMaterial->learning_material_id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
             }
+            
+            return $materials->sortBy('order_number');
+        } catch (\Exception $e) {
+            Log::error('Error getting section materials', [
+                'section_id' => $section->id,
+                'error' => $e->getMessage()
+            ]);
+            return collect();
         }
-        
-        return $materials->sortBy('order_number');
     }
 
     /**
-     * Get sections that use a specific material
+     * Get sections that use a specific material - FIXED
      */
     public function getSectionsForMaterial(string $materialId): Collection
     {
-        return SectionMaterial::where('learning_material_id', $materialId)
-            ->with('section')
-            ->get()
-            ->pluck('section');
+        try {
+            $sectionIds = DB::table('section_materials')
+                ->where('learning_material_id', $materialId)
+                ->pluck('section_id')
+                ->toArray();
+
+            if (empty($sectionIds)) {
+                return collect();
+            }
+
+            return Section::whereIn('id', $sectionIds)->get();
+        } catch (\Exception $e) {
+            Log::error('Error getting sections for material', [
+                'material_id' => $materialId,
+                'error' => $e->getMessage()
+            ]);
+            return collect();
+        }
     }
 
     /**
-     * Create a new learning material with MongoDB content
+     * Create a new learning material with MongoDB content - FIXED
      */
-    public function createLearningMaterial(array $data): MongoLearningMaterial
+    public function createLearningMaterial(array $data): ?LearningMaterial
     {
         DB::beginTransaction();
         
         try {
-            // Create the MongoDB material
-            $mongoMaterial = MongoLearningMaterial::create([
-                'title' => $data['title'],
-                'description' => $data['description'] ?? '',
-                'content' => $data['content'] ?? '',
-                'type' => $data['type'] ?? 'text',
-                'format' => $data['format'] ?? 'html',
-                'metadata' => $data['metadata'] ?? [],
-                'settings' => $data['settings'] ?? [],
-                'tags' => $data['tags'] ?? [],
-                'difficulty_level' => $data['difficulty_level'] ?? 'beginner',
-                'estimated_duration' => $data['estimated_duration'] ?? 0,
-                'prerequisites' => $data['prerequisites'] ?? [],
-                'learning_objectives' => $data['learning_objectives'] ?? [],
-                'assessment_criteria' => $data['assessment_criteria'] ?? [],
-                'interactive_elements' => $data['interactive_elements'] ?? [],
-                'accessibility_features' => $data['accessibility_features'] ?? [],
-                'version' => 1,
-                'status' => $data['status'] ?? 'draft',
-                'created_by' => $data['created_by'] ?? auth()->id(),
-                'updated_by' => $data['updated_by'] ?? auth()->id(),
-            ]);
+            // Create the MongoDB material using the model's method
+            $mongoMaterial = LearningMaterial::createMaterial($data);
 
             // If section_id is provided, create the section material relationship
             if (isset($data['section_id'])) {
-                SectionMaterial::create([
-                    'section_id' => $data['section_id'],
-                    'learning_material_id' => $mongoMaterial->_id,
-                    'order_number' => $data['order_number'] ?? 1,
-                    'is_required' => $data['is_required'] ?? true,
-                    'completion_criteria' => $data['completion_criteria'] ?? null,
-                    'settings' => $data['settings'] ?? null,
-                    'available_from' => $data['available_from'] ?? null,
-                    'available_until' => $data['available_until'] ?? null,
-                ]);
+                $this->addMaterialToSection(
+                    $data['section_id'],
+                    $mongoMaterial->_id,
+                    $data['order_number'] ?? null,
+                    [
+                        'is_required' => $data['is_required'] ?? true,
+                        'completion_criteria' => $data['completion_criteria'] ?? [],
+                    ]
+                );
             }
 
             DB::commit();
-            return $mongoMaterial;
             
+            Log::info('Learning material created', [
+                'material_id' => $mongoMaterial->_id,
+                'title' => $mongoMaterial->title,
+                'type' => $mongoMaterial->content_type
+            ]);
+
+            return $mongoMaterial;
         } catch (\Exception $e) {
             DB::rollBack();
-            throw $e;
+            
+            Log::error('Error creating learning material', [
+                'data' => $data,
+                'error' => $e->getMessage()
+            ]);
+            
+            return null;
         }
     }
 
     /**
-     * Update a learning material
+     * Update learning material - FIXED
      */
-    public function updateLearningMaterial(string $materialId, array $data): MongoLearningMaterial
+    public function updateLearningMaterial(string $materialId, array $data): bool
     {
-        $mongoMaterial = MongoLearningMaterial::findOrFail($materialId);
-        
-        $mongoMaterial->update(array_merge($data, [
-            'updated_by' => auth()->id(),
-            'version' => $mongoMaterial->version + 1,
-        ]));
-        
-        return $mongoMaterial;
+        try {
+            $material = LearningMaterial::find($materialId);
+            
+            if (!$material) {
+                Log::warning('Material not found for update', ['material_id' => $materialId]);
+                return false;
+            }
+
+            // Update content data if provided
+            if (isset($data['content_data'])) {
+                $material->updateContent($data['content_data']);
+                unset($data['content_data']);
+            }
+
+            // Update other fields
+            $material->update($data);
+            
+            Log::info('Learning material updated', [
+                'material_id' => $materialId,
+                'title' => $material->title
+            ]);
+
+            return true;
+        } catch (\Exception $e) {
+            Log::error('Error updating learning material', [
+                'material_id' => $materialId,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
     }
 
     /**
-     * Delete a learning material
+     * Delete learning material - FIXED
      */
     public function deleteLearningMaterial(string $materialId): bool
     {
         DB::beginTransaction();
         
         try {
-            // Delete the MongoDB material
-            $mongoMaterial = MongoLearningMaterial::findOrFail($materialId);
-            $mongoMaterial->delete();
-            
-            // Delete the section material relationships
-            SectionMaterial::where('learning_material_id', $materialId)->delete();
-            
-            // Delete student progress records
-            StudentProgress::where('learning_material_id', $materialId)->delete();
-            
+            // Remove all section material relationships
+            DB::table('section_materials')
+                ->where('learning_material_id', $materialId)
+                ->delete();
+
+            // Archive the MongoDB material
+            $material = LearningMaterial::find($materialId);
+            if ($material) {
+                $material->archive();
+            }
+
             DB::commit();
-            return true;
             
+            Log::info('Learning material deleted', ['material_id' => $materialId]);
+            
+            return true;
         } catch (\Exception $e) {
             DB::rollBack();
-            throw $e;
-        }
-    }
-
-    /**
-     * Get student progress for a material
-     */
-    public function getStudentProgress(string $materialId, int $studentId): ?StudentProgress
-    {
-        return StudentProgress::where('learning_material_id', $materialId)
-            ->where('student_id', $studentId)
-            ->first();
-    }
-
-    /**
-     * Update student progress for a material
-     */
-    public function updateStudentProgress(string $materialId, int $studentId, array $progressData): StudentProgress
-    {
-        $progress = StudentProgress::updateOrCreate(
-            [
-                'learning_material_id' => $materialId,
-                'student_id' => $studentId,
-            ],
-            array_merge($progressData, [
-                'last_accessed_at' => now(),
-            ])
-        );
-        
-        return $progress;
-    }
-
-    /**
-     * Get course analytics
-     */
-    public function getCourseAnalytics(Course $course): array
-    {
-        $sections = $course->sections;
-        $totalMaterials = 0;
-        $totalDuration = 0;
-        $materialTypes = [];
-        
-        foreach ($sections as $section) {
-            $materials = $this->getSectionMaterials($section);
-            $totalMaterials += $materials->count();
             
-            foreach ($materials as $material) {
-                $totalDuration += $material->mongo_content->estimated_duration ?? 0;
-                $type = $material->mongo_content->type ?? 'unknown';
-                $materialTypes[$type] = ($materialTypes[$type] ?? 0) + 1;
+            Log::error('Error deleting learning material', [
+                'material_id' => $materialId,
+                'error' => $e->getMessage()
+            ]);
+            
+            return false;
+        }
+    }
+
+    /**
+     * Reorder materials in a section
+     */
+    public function reorderSectionMaterials(int $sectionId, array $materialOrder): bool
+    {
+        DB::beginTransaction();
+        
+        try {
+            foreach ($materialOrder as $index => $materialId) {
+                DB::table('section_materials')
+                    ->where('section_id', $sectionId)
+                    ->where('learning_material_id', $materialId)
+                    ->update(['order_number' => $index + 1]);
             }
+
+            DB::commit();
+            
+            Log::info('Section materials reordered', [
+                'section_id' => $sectionId,
+                'new_order' => $materialOrder
+            ]);
+            
+            return true;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('Error reordering section materials', [
+                'section_id' => $sectionId,
+                'error' => $e->getMessage()
+            ]);
+            
+            return false;
         }
-        
-        return [
-            'total_sections' => $sections->count(),
-            'total_materials' => $totalMaterials,
-            'total_duration' => $totalDuration,
-            'material_types' => $materialTypes,
-            'average_duration_per_material' => $totalMaterials > 0 ? round($totalDuration / $totalMaterials, 2) : 0,
+    }
+
+    /**
+     * Sync course data between MySQL and MongoDB
+     */
+    public function syncCourseData(int $courseId): array
+    {
+        $results = [
+            'synced' => 0,
+            'errors' => 0,
+            'orphaned_removed' => 0,
         ];
-    }
 
-    /**
-     * Search learning materials
-     */
-    public function searchMaterials(string $searchTerm, array $filters = []): Collection
-    {
-        $query = MongoLearningMaterial::query();
-        
-        // Apply search
-        if ($searchTerm) {
-            $query->search($searchTerm);
-        }
-        
-        // Apply filters
-        if (isset($filters['type'])) {
-            $query->ofType($filters['type']);
-        }
-        
-        if (isset($filters['status'])) {
-            $query->withStatus($filters['status']);
-        }
-        
-        if (isset($filters['difficulty'])) {
-            $query->withDifficulty($filters['difficulty']);
-        }
-        
-        if (isset($filters['tag'])) {
-            $query->withTag($filters['tag']);
-        }
-        
-        return $query->orderBy('created_at', 'desc')->get();
-    }
+        try {
+            // Get all material IDs referenced in section_materials for this course
+            $referencedMaterialIds = DB::table('section_materials')
+                ->join('course_sections', 'section_materials.section_id', '=', 'course_sections.section_id')
+                ->where('course_sections.course_id', $courseId)
+                ->pluck('section_materials.learning_material_id')
+                ->unique()
+                ->toArray();
 
-    /**
-     * Get material recommendations for a student
-     */
-    public function getMaterialRecommendations(int $studentId, Course $course): Collection
-    {
-        // Get student's completed materials
-        $completedMaterials = StudentProgress::where('student_id', $studentId)
-            ->where('status', 'completed')
-            ->pluck('learning_material_id');
-        
-        // Get all course materials
-        $courseMaterials = $this->getCourseMaterials($course);
-        
-        // Filter out completed materials and return recommendations
-        return $courseMaterials->filter(function ($material) use ($completedMaterials) {
-            return !$completedMaterials->contains($material->learning_material_id);
-        })->take(5);
+            // Check which materials actually exist in MongoDB
+            $existingMaterials = LearningMaterial::whereIn('_id', $referencedMaterialIds)->pluck('_id')->toArray();
+            
+            // Find orphaned references
+            $orphanedRefs = array_diff($referencedMaterialIds, $existingMaterials);
+            
+            if (!empty($orphanedRefs)) {
+                // Remove orphaned references
+                $removed = DB::table('section_materials')
+                    ->whereIn('learning_material_id', $orphanedRefs)
+                    ->delete();
+                
+                $results['orphaned_removed'] = $removed;
+            }
+
+            $results['synced'] = count($existingMaterials);
+            
+            Log::info('Course data synced', [
+                'course_id' => $courseId,
+                'results' => $results
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Error syncing course data', [
+                'course_id' => $courseId,
+                'error' => $e->getMessage()
+            ]);
+            $results['errors']++;
+        }
+
+        return $results;
     }
-} 
+}

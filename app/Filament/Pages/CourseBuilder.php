@@ -22,15 +22,16 @@ use Filament\Forms\Components\Builder;
 use Filament\Forms\Components\Builder\Block;
 use Filament\Notifications\Notification;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
-class EnhancedCourseBuilder extends Page implements HasForms
+class CourseBuilder extends Page implements HasForms
 {
     use InteractsWithForms;
 
     protected static ?string $navigationIcon = 'heroicon-o-academic-cap';
     protected static ?string $navigationLabel = 'Course Builder';
     protected static ?string $navigationGroup = 'Course Management';
-    protected static string $view = 'filament.pages.enhanced-course-builder';
+    protected static string $view = 'filament.pages.course-builder';
 
     public ?array $data = [];
     public ?int $selectedCourseId = null;
@@ -56,187 +57,178 @@ class EnhancedCourseBuilder extends Page implements HasForms
                     ->schema([
                         Select::make('selectedCourseId')
                             ->label('Select Course to Edit')
-                            ->options(Course::active()->pluck('name', 'id'))
+                            ->options(function () {
+                                try {
+                                    return Course::where('is_active', true)
+                                        ->whereNotNull('name')
+                                        ->where('name', '!=', '')
+                                        ->pluck('name', 'id')
+                                        ->filter();
+                                } catch (\Exception $e) {
+                                    Log::error('Error loading courses for builder', ['error' => $e->getMessage()]);
+                                    return [];
+                                }
+                            })
                             ->searchable()
                             ->live()
                             ->afterStateUpdated(function ($state) {
-                                $this->loadCourseStructure($state);
+                                if ($state) {
+                                    $this->loadCourseStructure($state);
+                                }
                             }),
                     ]),
 
                 FormSection::make('Course Structure')
                     ->schema([
-                        Builder::make('sections')
+                        Repeater::make('sections')
                             ->label('Course Sections')
-                            ->blocks([
-                                Block::make('section')
-                                    ->label('Course Section')
-                                    ->icon('heroicon-m-document-text')
+                            ->schema([
+                                Grid::make(2)
                                     ->schema([
-                                        Grid::make(2)
-                                            ->schema([
-                                                Select::make('section_id')
-                                                    ->label('Existing Section')
-                                                    ->options(Section::active()->pluck('title', 'id'))
-                                                    ->searchable()
-                                                    ->nullable()
-                                                    ->live()
-                                                    ->afterStateUpdated(function ($state, callable $set) {
-                                                        if ($state) {
-                                                            $section = Section::find($state);
-                                                            if ($section) {
-                                                                $set('title', $section->title);
-                                                                $set('description', $section->description);
-                                                            }
-                                                        }
-                                                    }),
-                                                
-                                                TextInput::make('title')
-                                                    ->label('Section Title')
-                                                    ->required()
-                                                    ->maxLength(255),
-                                            ]),
-
-                                        Textarea::make('description')
-                                            ->label('Section Description')
-                                            ->rows(2),
-
-                                        Grid::make(3)
-                                            ->schema([
-                                                Toggle::make('is_required')
-                                                    ->label('Required Section')
-                                                    ->default(true),
-                                                
-                                                DateTimePicker::make('opens_at')
-                                                    ->label('Opens At'),
-                                                
-                                                DateTimePicker::make('closes_at')
-                                                    ->label('Closes At'),
-                                            ]),
-
-                                        Builder::make('materials')
-                                            ->label('Learning Materials')
-                                            ->blocks([
-                                                Block::make('video')
-                                                    ->label('Video Content')
-                                                    ->icon('heroicon-m-play-circle')
-                                                    ->schema([
-                                                        TextInput::make('title')
-                                                            ->required(),
-                                                        Textarea::make('description')
-                                                            ->rows(2),
-                                                        TextInput::make('video_url')
-                                                            ->label('Video URL')
-                                                            ->url()
-                                                            ->required(),
-                                                        TextInput::make('duration')
-                                                            ->label('Duration (minutes)')
-                                                            ->numeric(),
-                                                    ]),
-
-                                                Block::make('document')
-                                                    ->label('Document')
-                                                    ->icon('heroicon-m-document')
-                                                    ->schema([
-                                                        TextInput::make('title')
-                                                            ->required(),
-                                                        Textarea::make('description')
-                                                            ->rows(2),
-                                                        TextInput::make('file_url')
-                                                            ->label('Document URL')
-                                                            ->url()
-                                                            ->required(),
-                                                        Select::make('file_type')
-                                                            ->options([
-                                                                'pdf' => 'PDF',
-                                                                'doc' => 'Word Document',
-                                                                'ppt' => 'PowerPoint',
-                                                                'txt' => 'Text File',
-                                                            ])
-                                                            ->default('pdf'),
-                                                        Toggle::make('download_allowed')
-                                                            ->label('Allow Download')
-                                                            ->default(true),
-                                                    ]),
-
-                                                Block::make('quiz')
-                                                    ->label('Quiz/Assessment')
-                                                    ->icon('heroicon-m-question-mark-circle')
-                                                    ->schema([
-                                                        TextInput::make('title')
-                                                            ->required(),
-                                                        Textarea::make('description')
-                                                            ->rows(2),
-                                                        TextInput::make('time_limit')
-                                                            ->label('Time Limit (minutes)')
-                                                            ->numeric(),
-                                                        TextInput::make('attempts_allowed')
-                                                            ->label('Attempts Allowed')
-                                                            ->numeric()
-                                                            ->default(1),
-                                                        TextInput::make('passing_score')
-                                                            ->label('Passing Score (%)')
-                                                            ->numeric()
-                                                            ->default(70),
-                                                        Repeater::make('questions')
-                                                            ->schema([
-                                                                TextInput::make('question')
-                                                                    ->required(),
-                                                                Select::make('type')
-                                                                    ->options([
-                                                                        'multiple_choice' => 'Multiple Choice',
-                                                                        'true_false' => 'True/False',
-                                                                        'short_answer' => 'Short Answer',
-                                                                        'essay' => 'Essay',
-                                                                    ])
-                                                                    ->required(),
-                                                                Repeater::make('options')
-                                                                    ->schema([
-                                                                        TextInput::make('text')
-                                                                            ->required(),
-                                                                        Toggle::make('is_correct')
-                                                                            ->default(false),
-                                                                    ])
-                                                                    ->visible(fn ($get) => in_array($get('type'), ['multiple_choice']))
-                                                                    ->columnSpanFull(),
-                                                            ])
-                                                            ->columnSpanFull(),
-                                                    ]),
-
-                                                Block::make('assignment')
-                                                    ->label('Assignment')
-                                                    ->icon('heroicon-m-clipboard-document-list')
-                                                    ->schema([
-                                                        TextInput::make('title')
-                                                            ->required(),
-                                                        Textarea::make('instructions')
-                                                            ->rows(4)
-                                                            ->required(),
-                                                        DateTimePicker::make('due_date')
-                                                            ->label('Due Date'),
-                                                        TextInput::make('max_points')
-                                                            ->label('Maximum Points')
-                                                            ->numeric()
-                                                            ->default(100),
-                                                        Select::make('submission_types')
-                                                            ->label('Submission Types')
-                                                            ->multiple()
-                                                            ->options([
-                                                                'file' => 'File Upload',
-                                                                'text' => 'Text Entry',
-                                                                'url' => 'Website URL',
-                                                            ])
-                                                            ->default(['file']),
-                                                    ]),
+                                        TextInput::make('title')
+                                            ->label('Section Title')
+                                            ->required()
+                                            ->maxLength(255),
+                                        
+                                        Select::make('section_id')
+                                            ->label('Existing Section')
+                                            ->options(function () {
+                                                try {
+                                                    return Section::where('is_active', true)
+                                                        ->whereNotNull('title')
+                                                        ->where('title', '!=', '')
+                                                        ->pluck('title', 'id')
+                                                        ->filter();
+                                                } catch (\Exception $e) {
+                                                    return [];
+                                                }
+                                            })
+                                            ->searchable()
+                                            ->placeholder('Create new or select existing'),
+                                    ]),
+                                
+                                Textarea::make('description')
+                                    ->label('Section Description')
+                                    ->rows(2),
+                                
+                                Grid::make(3)
+                                    ->schema([
+                                        Toggle::make('is_required')
+                                            ->label('Required Section')
+                                            ->default(true),
+                                        
+                                        DateTimePicker::make('opens_at')
+                                            ->label('Opens At'),
+                                        
+                                        DateTimePicker::make('closes_at')
+                                            ->label('Closes At'),
+                                    ]),
+                                
+                                Repeater::make('materials')
+                                    ->label('Learning Materials')
+                                    ->schema([
+                                        Select::make('type')
+                                            ->label('Material Type')
+                                            ->options([
+                                                'text' => 'Text/HTML Content',
+                                                'video' => 'Video',
+                                                'document' => 'Document/File',
+                                                'quiz' => 'Quiz/Assessment',
+                                                'assignment' => 'Assignment',
+                                                'interactive' => 'Interactive Content',
                                             ])
-                                            ->columnSpanFull(),
+                                            ->required()
+                                            ->live(),
+                                        
+                                        TextInput::make('title')
+                                            ->label('Material Title')
+                                            ->required()
+                                            ->maxLength(255),
+                                        
+                                        Textarea::make('description')
+                                            ->label('Description')
+                                            ->rows(2),
+                                        
+                                        // Dynamic fields based on material type
+                                        TextInput::make('video_url')
+                                            ->label('Video URL')
+                                            ->url()
+                                            ->visible(fn ($get) => $get('type') === 'video'),
+                                        
+                                        TextInput::make('duration')
+                                            ->label('Duration (minutes)')
+                                            ->numeric()
+                                            ->visible(fn ($get) => in_array($get('type'), ['video', 'quiz'])),
+                                        
+                                        TextInput::make('file_url')
+                                            ->label('File URL')
+                                            ->url()
+                                            ->visible(fn ($get) => $get('type') === 'document'),
+                                        
+                                        Select::make('file_type')
+                                            ->label('File Type')
+                                            ->options([
+                                                'pdf' => 'PDF',
+                                                'doc' => 'Word Document',
+                                                'ppt' => 'PowerPoint',
+                                                'xlsx' => 'Excel',
+                                            ])
+                                            ->visible(fn ($get) => $get('type') === 'document'),
+                                        
+                                        Toggle::make('download_allowed')
+                                            ->label('Allow Download')
+                                            ->default(true)
+                                            ->visible(fn ($get) => $get('type') === 'document'),
+                                        
+                                        TextInput::make('time_limit')
+                                            ->label('Time Limit (minutes)')
+                                            ->numeric()
+                                            ->visible(fn ($get) => $get('type') === 'quiz'),
+                                        
+                                        TextInput::make('attempts_allowed')
+                                            ->label('Attempts Allowed')
+                                            ->numeric()
+                                            ->default(1)
+                                            ->visible(fn ($get) => $get('type') === 'quiz'),
+                                        
+                                        TextInput::make('passing_score')
+                                            ->label('Passing Score (%)')
+                                            ->numeric()
+                                            ->default(70)
+                                            ->visible(fn ($get) => $get('type') === 'quiz'),
+                                        
+                                        Textarea::make('instructions')
+                                            ->label('Instructions')
+                                            ->rows(3)
+                                            ->visible(fn ($get) => $get('type') === 'assignment'),
+                                        
+                                        DateTimePicker::make('due_date')
+                                            ->label('Due Date')
+                                            ->visible(fn ($get) => $get('type') === 'assignment'),
+                                        
+                                        TextInput::make('max_points')
+                                            ->label('Maximum Points')
+                                            ->numeric()
+                                            ->default(100)
+                                            ->visible(fn ($get) => $get('type') === 'assignment'),
+                                        
+                                        Toggle::make('is_required')
+                                            ->label('Required Material')
+                                            ->default(true),
                                     ])
-                                    ->columnSpanFull(),
+                                    ->reorderable()
+                                    ->itemLabel(fn (array $state): ?string => $state['title'] ?? 'New Material')
+                                    ->addActionLabel('Add Learning Material')
+                                    ->defaultItems(0)
+                                    ->collapsed(),
                             ])
-                            ->columnSpanFull()
-                            ->visible(fn ($get) => $get('selectedCourseId')),
+                            ->reorderable()
+                            ->itemLabel(fn (array $state): ?string => $state['title'] ?? 'New Section')
+                            ->addActionLabel('Add Section')
+                            ->defaultItems(0)
+                            ->collapsed(),
                     ])
-                    ->visible(fn ($get) => $get('selectedCourseId')),
+                    ->visible(fn () => $this->selectedCourseId !== null),
             ])
             ->statePath('data');
     }
@@ -249,33 +241,84 @@ class EnhancedCourseBuilder extends Page implements HasForms
         }
 
         try {
-            $this->courseStructure = $this->courseContentService->getCourseStructure($courseId);
+            $this->selectedCourseId = $courseId;
             
-            // Convert to form format
-            $sectionsData = [];
-            foreach ($this->courseStructure['sections'] as $section) {
-                $materialsData = [];
-                foreach ($section->materials as $material) {
-                    $materialsData[] = [
-                        'type' => $material->content_type,
-                        'data' => array_merge(
-                            $material->toArray(),
-                            $material->content_data
-                        ),
-                    ];
-                }
+            // Get course structure using the service
+            $structure = $this->courseContentService->getCourseStructure($courseId);
+            
+            if (!$structure['course']) {
+                throw new \Exception('Course not found');
+            }
 
+            $sectionsData = [];
+            foreach ($structure['sections'] as $section) {
+                $materialsData = [];
+                
+                // Safely handle materials - they might not exist yet
+                if (isset($section->materials) && $section->materials) {
+                    foreach ($section->materials as $material) {
+                        $mongoMaterial = null;
+                        
+                        // Safely get mongo material
+                        if (isset($material->mongo_content)) {
+                            $mongoMaterial = $material->mongo_content;
+                        } elseif (isset($material->learning_material_id)) {
+                            try {
+                                $mongoMaterial = LearningMaterial::find($material->learning_material_id);
+                            } catch (\Exception $e) {
+                                Log::warning('Could not load mongo material', [
+                                    'material_id' => $material->learning_material_id,
+                                    'error' => $e->getMessage()
+                                ]);
+                            }
+                        }
+                        
+                        $materialData = [
+                            'type' => $mongoMaterial->content_type ?? 'text',
+                            'title' => $mongoMaterial->title ?? $material->title ?? 'Untitled Material',
+                            'description' => $mongoMaterial->description ?? $material->description ?? '',
+                            'is_required' => $material->pivot->is_required ?? true,
+                        ];
+                        
+                        // Add type-specific data safely
+                        if ($mongoMaterial && isset($mongoMaterial->content_data) && is_array($mongoMaterial->content_data)) {
+                            $contentData = $mongoMaterial->content_data;
+                            
+                            switch ($mongoMaterial->content_type) {
+                                case 'video':
+                                    $materialData['video_url'] = $contentData['url'] ?? '';
+                                    $materialData['duration'] = $contentData['duration'] ?? 0;
+                                    break;
+                                case 'document':
+                                    $materialData['file_url'] = $contentData['file_url'] ?? '';
+                                    $materialData['file_type'] = $contentData['file_type'] ?? 'pdf';
+                                    $materialData['download_allowed'] = $contentData['download_allowed'] ?? true;
+                                    break;
+                                case 'quiz':
+                                    $materialData['time_limit'] = $contentData['time_limit'] ?? null;
+                                    $materialData['attempts_allowed'] = $contentData['attempts_allowed'] ?? 1;
+                                    $materialData['passing_score'] = $contentData['passing_score'] ?? 70;
+                                    break;
+                                case 'assignment':
+                                    $materialData['instructions'] = $contentData['instructions'] ?? '';
+                                    $materialData['due_date'] = $contentData['due_date'] ?? null;
+                                    $materialData['max_points'] = $contentData['max_points'] ?? 100;
+                                    break;
+                            }
+                        }
+                        
+                        $materialsData[] = $materialData;
+                    }
+                }
+                
                 $sectionsData[] = [
-                    'type' => 'section',
-                    'data' => [
-                        'section_id' => $section->id,
-                        'title' => $section->title,
-                        'description' => $section->description,
-                        'is_required' => $section->pivot->is_required ?? true,
-                        'opens_at' => $section->pivot->opens_at,
-                        'closes_at' => $section->pivot->closes_at,
-                        'materials' => $materialsData,
-                    ],
+                    'section_id' => $section->id,
+                    'title' => $section->title ?? 'Untitled Section',
+                    'description' => $section->description ?? '',
+                    'is_required' => $section->pivot->is_required ?? true,
+                    'opens_at' => $section->pivot->opens_at ?? null,
+                    'closes_at' => $section->pivot->closes_at ?? null,
+                    'materials' => $materialsData,
                 ];
             }
 
@@ -284,12 +327,23 @@ class EnhancedCourseBuilder extends Page implements HasForms
                 'sections' => $sectionsData,
             ]);
 
+            $this->courseStructure = $structure;
+
         } catch (\Exception $e) {
+            Log::error('Error loading course structure', [
+                'course_id' => $courseId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             Notification::make()
                 ->title('Error loading course structure')
                 ->body($e->getMessage())
                 ->danger()
                 ->send();
+                
+            // Set empty structure to prevent further errors
+            $this->courseStructure = ['course' => null, 'sections' => collect()];
         }
     }
 
@@ -311,19 +365,24 @@ class EnhancedCourseBuilder extends Page implements HasForms
 
             $sectionOrder = 1;
             foreach ($data['sections'] ?? [] as $sectionData) {
-                if ($sectionData['type'] !== 'section') continue;
-
-                $section = $sectionData['data'];
+                // Handle the new structure (no longer wrapped in type/data)
+                $section = $sectionData;
                 
                 // Create or get section
                 $sectionId = $section['section_id'] ?? null;
                 if (!$sectionId) {
                     $newSection = Section::create([
                         'title' => $section['title'],
-                        'description' => $section['description'],
+                        'description' => $section['description'] ?? '',
                         'is_active' => true,
                     ]);
                     $sectionId = $newSection->id;
+                } else {
+                    // Update existing section
+                    Section::where('id', $sectionId)->update([
+                        'title' => $section['title'],
+                        'description' => $section['description'] ?? '',
+                    ]);
                 }
 
                 // Add section to course
@@ -333,8 +392,8 @@ class EnhancedCourseBuilder extends Page implements HasForms
                     'order_number' => $sectionOrder++,
                     'status' => 'open',
                     'is_required' => $section['is_required'] ?? true,
-                    'opens_at' => $section['opens_at'],
-                    'closes_at' => $section['closes_at'],
+                    'opens_at' => $section['opens_at'] ?? null,
+                    'closes_at' => $section['closes_at'] ?? null,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -348,11 +407,11 @@ class EnhancedCourseBuilder extends Page implements HasForms
                 $materialOrder = 1;
                 foreach ($section['materials'] ?? [] as $materialData) {
                     // Create material in MongoDB
-                    $material = LearningMaterial::create([
-                        'title' => $materialData['data']['title'],
-                        'description' => $materialData['data']['description'] ?? '',
+                    $material = LearningMaterial::createMaterial([
+                        'title' => $materialData['title'],
+                        'description' => $materialData['description'] ?? '',
                         'content_type' => $materialData['type'],
-                        'content_data' => $this->formatContentData($materialData['type'], $materialData['data']),
+                        'content_data' => $this->formatContentData($materialData['type'], $materialData),
                         'is_active' => true,
                         'created_by' => auth()->id(),
                     ]);
@@ -362,7 +421,7 @@ class EnhancedCourseBuilder extends Page implements HasForms
                         'section_id' => $sectionId,
                         'learning_material_id' => $material->_id,
                         'order_number' => $materialOrder++,
-                        'is_required' => true,
+                        'is_required' => $materialData['is_required'] ?? true,
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
@@ -381,8 +440,88 @@ class EnhancedCourseBuilder extends Page implements HasForms
         } catch (\Exception $e) {
             DB::rollBack();
             
+            Log::error('Error saving course structure', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             Notification::make()
                 ->title('Error saving course structure')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+    }
+
+    public function previewCourse(): void
+    {
+        if (!$this->selectedCourseId) {
+            Notification::make()
+                ->title('Please select a course first')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        // Redirect to course preview page
+        $this->redirect(route('filament.admin.resources.courses.view', $this->selectedCourseId));
+    }
+
+    public function duplicateCourse(): void
+    {
+        if (!$this->selectedCourseId) {
+            Notification::make()
+                ->title('Please select a course first')
+                ->warning()
+                ->send();
+            return;
+        }
+
+        try {
+            $originalCourse = Course::findOrFail($this->selectedCourseId);
+            
+            // Create duplicate course
+            $duplicateCourse = Course::create([
+                'name' => $originalCourse->name . ' (Copy)',
+                'code' => $originalCourse->code . '_COPY',
+                'description' => $originalCourse->description,
+                'credits' => $originalCourse->credits,
+                'department' => $originalCourse->department,
+                'is_active' => false, // Start as inactive
+            ]);
+
+            // Copy course structure
+            $structure = $this->courseContentService->getCourseStructure($this->selectedCourseId);
+            
+            foreach ($structure['sections'] as $section) {
+                // Create section assignment
+                DB::table('course_sections')->insert([
+                    'course_id' => $duplicateCourse->id,
+                    'section_id' => $section->id,
+                    'order_number' => $section->pivot->order_number,
+                    'status' => $section->pivot->status,
+                    'is_required' => $section->pivot->is_required,
+                    'opens_at' => $section->pivot->opens_at,
+                    'closes_at' => $section->pivot->closes_at,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            Notification::make()
+                ->title('Course duplicated successfully!')
+                ->body("New course '{$duplicateCourse->name}' created")
+                ->success()
+                ->send();
+
+        } catch (\Exception $e) {
+            Log::error('Error duplicating course', [
+                'course_id' => $this->selectedCourseId,
+                'error' => $e->getMessage()
+            ]);
+            
+            Notification::make()
+                ->title('Error duplicating course')
                 ->body($e->getMessage())
                 ->danger()
                 ->send();
@@ -402,49 +541,22 @@ class EnhancedCourseBuilder extends Page implements HasForms
                 'download_allowed' => $data['download_allowed'] ?? true,
             ],
             'quiz' => [
-                'questions' => $data['questions'] ?? [],
-                'time_limit' => $data['time_limit'],
+                'questions' => [], // Would be populated separately
+                'time_limit' => $data['time_limit'] ?? null,
                 'attempts_allowed' => $data['attempts_allowed'] ?? 1,
                 'passing_score' => $data['passing_score'] ?? 70,
             ],
             'assignment' => [
                 'instructions' => $data['instructions'] ?? '',
-                'due_date' => $data['due_date'],
+                'due_date' => $data['due_date'] ?? null,
                 'max_points' => $data['max_points'] ?? 100,
-                'submission_types' => $data['submission_types'] ?? ['file'],
+                'submission_types' => ['text', 'file'],
             ],
-            default => $data,
+            'interactive' => [
+                'html_content' => '',
+                'interactive_elements' => [],
+            ],
+            default => []
         };
-    }
-
-    public function previewCourse(): void
-    {
-        if (!$this->selectedCourseId) {
-            Notification::make()
-                ->title('Please select a course first')
-                ->warning()
-                ->send();
-            return;
-        }
-
-        // Redirect to student view or open in new tab
-        $this->redirect(route('filament.admin.pages.student-course-view', ['course' => $this->selectedCourseId]));
-    }
-
-    public function duplicateCourse(): void
-    {
-        if (!$this->selectedCourseId) {
-            Notification::make()
-                ->title('Please select a course first')
-                ->warning()
-                ->send();
-            return;
-        }
-
-        // This would open a modal or redirect to course duplication
-        Notification::make()
-            ->title('Course duplication feature coming soon!')
-            ->info()
-            ->send();
     }
 }

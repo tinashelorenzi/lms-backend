@@ -34,7 +34,15 @@ class SectionsRelationManager extends RelationManager
                     ->schema([
                         Select::make('section_id')
                             ->label('Section')
-                            ->options(Section::active()->pluck('title', 'id'))
+                            ->options(function () {
+                                // Fixed: Ensure proper handling of null values
+                                return Section::active()
+                                    ->whereNotNull('title')
+                                    ->where('title', '!=', '')
+                                    ->get()
+                                    ->pluck('title', 'id')
+                                    ->filter(); // Remove any remaining null values
+                            })
                             ->required()
                             ->searchable()
                             ->createOptionForm([
@@ -54,37 +62,43 @@ class SectionsRelationManager extends RelationManager
                             ])
                             ->createOptionUsing(function (array $data) {
                                 return Section::create($data)->id;
-                            })
-                            ->columnSpanFull(),
-                    ]),
+                            }),
+                    ])
+                    ->columnSpan(2),
 
                 FormSection::make('Section Configuration')
                     ->schema([
                         TextInput::make('order_number')
                             ->label('Order')
                             ->numeric()
-                            ->default(fn() => $this->getOwnerRecord()->sections()->count() + 1)
                             ->required()
-                            ->columnSpan(1),
+                            ->default(function () {
+                                // Get the next order number for this course
+                                $maxOrder = $this->getOwnerRecord()
+                                    ->sections()
+                                    ->max('course_sections.order_number');
+                                return ($maxOrder ?? 0) + 1;
+                            }),
                         
                         Select::make('status')
-                            ->options(collect(SectionStatus::cases())
-                                ->mapWithKeys(fn($case) => [$case->value => $case->label()]))
-                            ->default(SectionStatus::DRAFT->value)
-                            ->required()
-                            ->columnSpan(1),
+                            ->options([
+                                SectionStatus::DRAFT->value => SectionStatus::DRAFT->label(),
+                                SectionStatus::OPEN->value => SectionStatus::OPEN->label(),
+                                SectionStatus::CLOSED->value => SectionStatus::CLOSED->label(),
+                                SectionStatus::AUTOMATED->value => SectionStatus::AUTOMATED->label(),
+                            ])
+                            ->default(SectionStatus::OPEN->value)
+                            ->required(),
                         
                         Toggle::make('is_required')
-                            ->default(true)
-                            ->columnSpan(2),
+                            ->label('Required Section')
+                            ->default(true),
                         
                         DateTimePicker::make('opens_at')
-                            ->label('Opens At')
-                            ->columnSpan(1),
+                            ->label('Opens At'),
                         
                         DateTimePicker::make('closes_at')
-                            ->label('Closes At')
-                            ->columnSpan(1),
+                            ->label('Closes At'),
                     ])
                     ->columns(2),
             ]);
@@ -101,23 +115,31 @@ class SectionsRelationManager extends RelationManager
                     ->alignCenter(),
                 TextColumn::make('title')
                     ->searchable()
-                    ->sortable(),
-                TextColumn::make('description')
-                    ->limit(50)
-                    ->toggleable(),
+                    ->sortable()
+                    ->description(fn($record) => $record->description),
                 BadgeColumn::make('status')
                     ->colors([
                         'gray' => SectionStatus::DRAFT->value,
                         'success' => SectionStatus::OPEN->value,
                         'danger' => SectionStatus::CLOSED->value,
                         'warning' => SectionStatus::AUTOMATED->value,
-                        'secondary' => SectionStatus::ARCHIVED->value,
                     ]),
                 BooleanColumn::make('is_required')
                     ->label('Required'),
-                BadgeColumn::make('materials_count')
+                // Fixed: Use a different approach for counting materials
+                TextColumn::make('materials_count')
                     ->label('Materials')
-                    ->counts('materials')
+                    ->getStateUsing(function ($record) {
+                        try {
+                            // Get materials count from section_materials table
+                            return \DB::table('section_materials')
+                                ->where('section_id', $record->id)
+                                ->count();
+                        } catch (\Exception $e) {
+                            return 0;
+                        }
+                    })
+                    ->badge()
                     ->color('primary'),
                 TextColumn::make('opens_at')
                     ->dateTime()
@@ -132,29 +154,49 @@ class SectionsRelationManager extends RelationManager
                         ->mapWithKeys(fn($case) => [$case->value => $case->label()])),
             ])
             ->headerActions([
-                Tables\Actions\CreateAction::make()
-                    ->label('Add Section'),
+                Tables\Actions\CreateAction::make(),
                 Tables\Actions\AttachAction::make()
-                    ->preloadRecordSelect()
-                    ->recordSelectOptionsQuery(fn (Builder $query) => $query->active())
-                    ->form(fn (AttachAction $action): array => [
-                        $action->getRecordSelect(),
+                    ->form(fn (Tables\Actions\AttachAction $action): array => [
+                        Select::make('recordId')
+                            ->label('Section')
+                            ->options(function () {
+                                // Only show sections not already attached to this course
+                                $attachedSectionIds = $this->getOwnerRecord()
+                                    ->sections()
+                                    ->pluck('sections.id')
+                                    ->toArray();
+                                
+                                return Section::active()
+                                    ->whereNotIn('id', $attachedSectionIds)
+                                    ->whereNotNull('title')
+                                    ->where('title', '!=', '')
+                                    ->pluck('title', 'id')
+                                    ->filter();
+                            })
+                            ->searchable()
+                            ->required(),
                         TextInput::make('order_number')
                             ->label('Order')
                             ->numeric()
-                            ->default(fn() => $this->getOwnerRecord()->sections()->count() + 1)
-                            ->required(),
+                            ->required()
+                            ->default(function () {
+                                $maxOrder = $this->getOwnerRecord()
+                                    ->sections()
+                                    ->max('course_sections.order_number');
+                                return ($maxOrder ?? 0) + 1;
+                            }),
                         Select::make('status')
-                            ->options(collect(SectionStatus::cases())
-                                ->mapWithKeys(fn($case) => [$case->value => $case->label()]))
-                            ->default(SectionStatus::DRAFT->value)
+                            ->options([
+                                SectionStatus::DRAFT->value => SectionStatus::DRAFT->label(),
+                                SectionStatus::OPEN->value => SectionStatus::OPEN->label(),
+                                SectionStatus::CLOSED->value => SectionStatus::CLOSED->label(),
+                                SectionStatus::AUTOMATED->value => SectionStatus::AUTOMATED->label(),
+                            ])
+                            ->default(SectionStatus::OPEN->value)
                             ->required(),
                         Toggle::make('is_required')
+                            ->label('Required Section')
                             ->default(true),
-                        DateTimePicker::make('opens_at')
-                            ->label('Opens At'),
-                        DateTimePicker::make('closes_at')
-                            ->label('Closes At'),
                     ]),
             ])
             ->actions([
@@ -167,7 +209,6 @@ class SectionsRelationManager extends RelationManager
                     Tables\Actions\DetachBulkAction::make(),
                 ]),
             ])
-            ->reorderable('order_number')
-            ->defaultSort('order_number');
+            ->reorderable('order_number');
     }
 }

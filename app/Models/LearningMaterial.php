@@ -3,10 +3,13 @@
 namespace App\Models;
 
 use MongoDB\Laravel\Eloquent\Model;
+use MongoDB\Laravel\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 
 class LearningMaterial extends Model
 {
+    use SoftDeletes;
+
     protected $connection = 'mongodb';
     protected $collection = 'learning_materials';
 
@@ -37,15 +40,35 @@ class LearningMaterial extends Model
         'tags' => 'array',
         'is_active' => 'boolean',
         'estimated_duration' => 'integer',
+        'version' => 'integer',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime',
     ];
 
     /**
-     * Get sections that use this material (MySQL relationship)
+     * FIXED: Get sections that use this material (using service instead of direct relationship)
      */
     public function sections()
     {
-        // We'll handle this through a service since we can't directly relate MongoDB to MySQL
-        return app(CourseContentService::class)->getSectionsForMaterial($this->_id);
+        // Use a service to handle the cross-database relationship
+        return app(\App\Services\CourseContentService::class)->getSectionsForMaterial($this->_id);
+    }
+
+    /**
+     * FIXED: Active scope for MongoDB
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    /**
+     * FIXED: Scope for materials by type
+     */
+    public function scopeByType($query, string $type)
+    {
+        return $query->where('content_type', $type);
     }
 
     /**
@@ -67,6 +90,37 @@ class LearningMaterial extends Model
         );
     }
 
+    /**
+     * Get statistics for this material
+     */
+    public function getStatistics(): array
+    {
+        try {
+            // Get usage statistics via service
+            $service = app(\App\Services\CourseContentService::class);
+            $sectionsCount = $service->getSectionsForMaterial($this->_id)->count();
+            
+            return [
+                'sections_using' => $sectionsCount,
+                'total_views' => $this->metadata['total_views'] ?? 0,
+                'average_completion_time' => $this->metadata['avg_completion_time'] ?? 0,
+                'difficulty_rating' => $this->difficulty_level,
+                'estimated_duration' => $this->estimated_duration,
+            ];
+        } catch (\Exception $e) {
+            return [
+                'sections_using' => 0,
+                'total_views' => 0,
+                'average_completion_time' => 0,
+                'difficulty_rating' => $this->difficulty_level,
+                'estimated_duration' => $this->estimated_duration,
+            ];
+        }
+    }
+
+    /**
+     * Format video content
+     */
     private function formatVideoContent(): array
     {
         return [
@@ -79,6 +133,9 @@ class LearningMaterial extends Model
         ];
     }
 
+    /**
+     * Format document content
+     */
     private function formatDocumentContent(): array
     {
         return [
@@ -90,6 +147,9 @@ class LearningMaterial extends Model
         ];
     }
 
+    /**
+     * Format quiz content
+     */
     private function formatQuizContent(): array
     {
         return [
@@ -97,11 +157,15 @@ class LearningMaterial extends Model
             'questions' => $this->content_data['questions'] ?? [],
             'time_limit' => $this->content_data['time_limit'] ?? null,
             'attempts_allowed' => $this->content_data['attempts_allowed'] ?? 1,
-            'randomize_questions' => $this->content_data['randomize_questions'] ?? false,
             'passing_score' => $this->content_data['passing_score'] ?? 70,
+            'randomize_questions' => $this->content_data['randomize_questions'] ?? false,
+            'show_results' => $this->content_data['show_results'] ?? true,
         ];
     }
 
+    /**
+     * Format assignment content
+     */
     private function formatAssignmentContent(): array
     {
         return [
@@ -109,47 +173,99 @@ class LearningMaterial extends Model
             'instructions' => $this->content_data['instructions'] ?? '',
             'due_date' => $this->content_data['due_date'] ?? null,
             'max_points' => $this->content_data['max_points'] ?? 100,
-            'submission_types' => $this->content_data['submission_types'] ?? ['file', 'text'],
+            'submission_types' => $this->content_data['submission_types'] ?? ['text'],
             'rubric' => $this->content_data['rubric'] ?? [],
+            'late_penalty' => $this->content_data['late_penalty'] ?? 0,
         ];
     }
 
+    /**
+     * Format interactive content
+     */
     private function formatInteractiveContent(): array
     {
         return [
             'type' => 'interactive',
             'html_content' => $this->content_data['html_content'] ?? '',
-            'css_styles' => $this->content_data['css_styles'] ?? '',
-            'javascript' => $this->content_data['javascript'] ?? '',
-            'resources' => $this->content_data['resources'] ?? [],
+            'interactive_elements' => $this->content_data['interactive_elements'] ?? [],
+            'completion_criteria' => $this->content_data['completion_criteria'] ?? [],
+            'tracking_enabled' => $this->content_data['tracking_enabled'] ?? true,
         ];
     }
 
     /**
-     * Scope for active materials
+     * Create a new learning material with validation
      */
-    public function scopeActive($query)
+    public static function createMaterial(array $data): self
     {
-        return $query->where('is_active', true);
+        // Validate required fields
+        if (empty($data['title'])) {
+            throw new \InvalidArgumentException('Title is required');
+        }
+
+        if (empty($data['content_type'])) {
+            throw new \InvalidArgumentException('Content type is required');
+        }
+
+        // Set defaults
+        $data = array_merge([
+            'is_active' => true,
+            'version' => 1,
+            'created_by' => auth()->id(),
+            'updated_by' => auth()->id(),
+            'metadata' => [],
+            'settings' => [],
+            'tags' => [],
+            'prerequisites' => [],
+            'learning_objectives' => [],
+            'estimated_duration' => 0,
+            'difficulty_level' => 'beginner',
+        ], $data);
+
+        return static::create($data);
     }
 
     /**
-     * Scope by content type
+     * Update material content
      */
-    public function scopeByType($query, string $type)
+    public function updateContent(array $contentData): bool
     {
-        return $query->where('content_type', $type);
+        $this->content_data = $contentData;
+        $this->version = $this->version + 1;
+        $this->updated_by = auth()->id();
+        
+        return $this->save();
     }
 
     /**
-     * Full text search
+     * Archive this material (soft delete)
      */
-    public function scopeSearch($query, string $searchTerm)
+    public function archive(): bool
     {
-        return $query->where(function ($q) use ($searchTerm) {
-            $q->where('title', 'like', "%{$searchTerm}%")
-              ->orWhere('description', 'like', "%{$searchTerm}%")
-              ->orWhere('tags', 'in', [$searchTerm]);
-        });
+        $this->is_active = false;
+        $this->save();
+        
+        return $this->delete();
+    }
+
+    /**
+     * Duplicate this material
+     */
+    public function duplicate(array $overrides = []): self
+    {
+        $data = $this->toArray();
+        
+        // Remove unique identifiers
+        unset($data['_id'], $data['created_at'], $data['updated_at']);
+        
+        // Apply overrides
+        $data = array_merge($data, $overrides, [
+            'title' => $overrides['title'] ?? $this->title . ' (Copy)',
+            'version' => 1,
+            'created_by' => auth()->id(),
+            'updated_by' => auth()->id(),
+        ]);
+        
+        return static::create($data);
     }
 }
