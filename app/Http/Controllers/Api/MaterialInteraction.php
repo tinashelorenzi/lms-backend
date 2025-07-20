@@ -1,121 +1,25 @@
 <?php
-
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\LearningMaterial;
-use App\Services\StudentProgressService;
-use App\Services\CourseContentService;
+use App\Services\CompleteStudentProgressService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class MaterialInteractionController extends Controller
 {
-    protected StudentProgressService $progressService;
-    protected CourseContentService $contentService;
+    protected CompleteStudentProgressService $progressService;
 
-    public function __construct(
-        StudentProgressService $progressService,
-        CourseContentService $contentService
-    ) {
+    public function __construct(CompleteStudentProgressService $progressService)
+    {
         $this->progressService = $progressService;
-        $this->contentService = $contentService;
     }
 
     /**
-     * Get material content for student
-     */
-    public function getMaterial(Request $request, string $materialId): JsonResponse
-    {
-        try {
-            $material = LearningMaterial::find($materialId);
-            
-            if (!$material || !$material->is_active) {
-                return response()->json(['error' => 'Material not found'], 404);
-            }
-
-            // Track material access
-            $this->progressService->trackMaterialInteraction(
-                Auth::id(),
-                $request->input('course_id'),
-                $request->input('section_id'),
-                $materialId,
-                [
-                    'action' => 'viewed',
-                    'timestamp' => now()->toISOString(),
-                    'user_agent' => $request->userAgent(),
-                ]
-            );
-
-            return response()->json([
-                'material' => [
-                    'id' => $material->_id,
-                    'title' => $material->title,
-                    'description' => $material->description,
-                    'content_type' => $material->content_type,
-                    'content' => $material->formatted_content,
-                    'estimated_duration' => $material->estimated_duration,
-                    'learning_objectives' => $material->learning_objectives,
-                ],
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to load material'], 500);
-        }
-    }
-
-    /**
-     * Update material progress
-     */
-    public function updateProgress(Request $request, string $materialId): JsonResponse
-    {
-        $validator = Validator::make($request->all(), [
-            'progress_percentage' => 'required|numeric|min:0|max:100',
-            'time_spent' => 'required|integer|min:0',
-            'interaction_data' => 'array',
-            'score' => 'nullable|numeric|min:0|max:100',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        try {
-            $this->progressService->updateMaterialProgress(
-                Auth::id(),
-                $materialId,
-                $request->input('progress_percentage'),
-                $request->input('time_spent'),
-                $request->input('score')
-            );
-
-            // Track interaction
-            $this->progressService->trackMaterialInteraction(
-                Auth::id(),
-                $request->input('course_id'),
-                $request->input('section_id'),
-                $materialId,
-                array_merge(
-                    $request->input('interaction_data', []),
-                    [
-                        'action' => 'progress_updated',
-                        'progress' => $request->input('progress_percentage'),
-                        'timestamp' => now()->toISOString(),
-                    ]
-                )
-            );
-
-            return response()->json(['success' => true, 'message' => 'Progress updated successfully']);
-
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to update progress'], 500);
-        }
-    }
-
-    /**
-     * Submit quiz/assessment answers
+     * Enhanced quiz submission with detailed tracking
      */
     public function submitQuiz(Request $request, string $materialId): JsonResponse
     {
@@ -131,48 +35,38 @@ class MaterialInteractionController extends Controller
         }
 
         try {
-            $material = LearningMaterial::find($materialId);
-            
-            if (!$material || $material->content_type !== 'quiz') {
-                return response()->json(['error' => 'Invalid quiz material'], 400);
+            $result = $this->progressService->submitQuiz(
+                Auth::id(),
+                $materialId,
+                $request->input('answers'),
+                $request->input('time_taken')
+            );
+
+            if (isset($result['error'])) {
+                return response()->json(['error' => $result['error']], 400);
             }
 
-            $quizData = $material->content_data;
-            $userAnswers = $request->input('answers');
-            $score = $this->calculateQuizScore($quizData['questions'], $userAnswers);
-            $passed = $score >= ($quizData['passing_score'] ?? 70);
-
-            // Update progress
-            $this->progressService->updateMaterialProgress(
-                Auth::id(),
-                $materialId,
-                $passed ? 100 : 0,
-                $request->input('time_taken'),
-                $score
-            );
-
-            // Track submission
-            $this->progressService->trackMaterialInteraction(
-                Auth::id(),
-                $request->input('course_id'),
-                $request->input('section_id'),
-                $materialId,
-                [
-                    'action' => 'quiz_submitted',
-                    'score' => $score,
-                    'passed' => $passed,
-                    'time_taken' => $request->input('time_taken'),
-                    'answers' => $userAnswers,
-                    'timestamp' => now()->toISOString(),
-                ]
-            );
-
-            return response()->json([
-                'success' => true,
-                'score' => $score,
-                'passed' => $passed,
-                'feedback' => $this->generateQuizFeedback($quizData['questions'], $userAnswers),
+            // Store detailed quiz result
+            DB::table('quiz_results')->insert([
+                'student_id' => Auth::id(),
+                'material_id' => $materialId,
+                'attempt_number' => DB::table('quiz_results')
+                    ->where('student_id', Auth::id())
+                    ->where('material_id', $materialId)
+                    ->count() + 1,
+                'score' => $result['score'],
+                'total_questions' => $result['total_questions'],
+                'correct_answers' => $result['correct_answers'],
+                'time_taken' => $result['time_taken'],
+                'answers' => json_encode($request->input('answers')),
+                'question_results' => json_encode($result['results']),
+                'passed' => $result['passed'],
+                'submitted_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
+
+            return response()->json($result);
 
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to submit quiz'], 500);
@@ -180,13 +74,15 @@ class MaterialInteractionController extends Controller
     }
 
     /**
-     * Submit assignment
+     * Enhanced assignment submission
      */
     public function submitAssignment(Request $request, string $materialId): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'submission_type' => 'required|in:file,text,url',
-            'content' => 'required',
+            'submission_type' => 'required|in:text,file,url',
+            'content' => 'required_if:submission_type,text',
+            'file' => 'required_if:submission_type,file|file|max:10240', // 10MB
+            'url' => 'required_if:submission_type,url|url',
             'course_id' => 'required|integer',
             'section_id' => 'required|integer',
         ]);
@@ -196,139 +92,38 @@ class MaterialInteractionController extends Controller
         }
 
         try {
-            $material = LearningMaterial::find($materialId);
-            
-            if (!$material || $material->content_type !== 'assignment') {
-                return response()->json(['error' => 'Invalid assignment material'], 400);
-            }
-
-            // Store submission (you might want a separate submissions table)
             $submissionData = [
-                'student_id' => Auth::id(),
-                'material_id' => $materialId,
-                'submission_type' => $request->input('submission_type'),
-                'content' => $request->input('content'),
-                'submitted_at' => now()->toISOString(),
-                'status' => 'submitted',
+                'type' => $request->input('submission_type'),
             ];
 
-            // Update progress to show submission
-            $this->progressService->updateMaterialProgress(
+            // Handle different submission types
+            switch ($request->input('submission_type')) {
+                case 'text':
+                    $submissionData['content'] = $request->input('content');
+                    break;
+                    
+                case 'file':
+                    $file = $request->file('file');
+                    $path = $file->store('assignments', 'public');
+                    $submissionData['file_path'] = $path;
+                    $submissionData['original_filename'] = $file->getClientOriginalName();
+                    break;
+                    
+                case 'url':
+                    $submissionData['url'] = $request->input('url');
+                    break;
+            }
+
+            $result = $this->progressService->submitAssignment(
                 Auth::id(),
                 $materialId,
-                100, // Mark as complete upon submission
-                0 // No additional time tracking for submission
+                $submissionData
             );
 
-            // Track submission
-            $this->progressService->trackMaterialInteraction(
-                Auth::id(),
-                $request->input('course_id'),
-                $request->input('section_id'),
-                $materialId,
-                [
-                    'action' => 'assignment_submitted',
-                    'submission_type' => $request->input('submission_type'),
-                    'timestamp' => now()->toISOString(),
-                ]
-            );
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Assignment submitted successfully',
-                'submission_id' => uniqid(), // You'd return actual submission ID
-            ]);
+            return response()->json($result);
 
         } catch (\Exception $e) {
             return response()->json(['error' => 'Failed to submit assignment'], 500);
         }
-    }
-
-    /**
-     * Get student progress for course
-     */
-    public function getCourseProgress(Request $request, int $courseId): JsonResponse
-    {
-        try {
-            $progress = $this->progressService->getStudentCourseProgress(Auth::id(), $courseId);
-            return response()->json($progress);
-
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Failed to load progress'], 500);
-        }
-    }
-
-    /**
-     * Calculate quiz score
-     */
-    private function calculateQuizScore(array $questions, array $userAnswers): float
-    {
-        if (empty($questions)) return 0;
-
-        $totalQuestions = count($questions);
-        $correctAnswers = 0;
-
-        foreach ($questions as $index => $question) {
-            $userAnswer = $userAnswers[$index] ?? null;
-            
-            if ($question['type'] === 'multiple_choice') {
-                foreach ($question['options'] as $optionIndex => $option) {
-                    if ($option['is_correct'] && $userAnswer == $optionIndex) {
-                        $correctAnswers++;
-                        break;
-                    }
-                }
-            } elseif ($question['type'] === 'true_false') {
-                $correctOption = null;
-                foreach ($question['options'] as $option) {
-                    if ($option['is_correct']) {
-                        $correctOption = $option['text'];
-                        break;
-                    }
-                }
-                if ($userAnswer === $correctOption) {
-                    $correctAnswers++;
-                }
-            }
-            // Add more question types as needed
-        }
-
-        return ($correctAnswers / $totalQuestions) * 100;
-    }
-
-    /**
-     * Generate quiz feedback
-     */
-    private function generateQuizFeedback(array $questions, array $userAnswers): array
-    {
-        $feedback = [];
-
-        foreach ($questions as $index => $question) {
-            $userAnswer = $userAnswers[$index] ?? null;
-            $isCorrect = false;
-            $correctAnswer = null;
-
-            if ($question['type'] === 'multiple_choice') {
-                foreach ($question['options'] as $optionIndex => $option) {
-                    if ($option['is_correct']) {
-                        $correctAnswer = $option['text'];
-                        if ($userAnswer == $optionIndex) {
-                            $isCorrect = true;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            $feedback[] = [
-                'question' => $question['question'],
-                'user_answer' => $userAnswer,
-                'correct_answer' => $correctAnswer,
-                'is_correct' => $isCorrect,
-                'explanation' => $question['explanation'] ?? null,
-            ];
-        }
-
-        return $feedback;
     }
 }

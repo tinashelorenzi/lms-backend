@@ -46,9 +46,55 @@ class SectionMaterial extends Model
             return false;
         }
 
-        // TODO: Implement when we add student progress tracking
-        // This would check against student_material_progress table
-        return false;
+        $progress = DB::table('student_progress')
+            ->where('student_id', $student->id)
+            ->where('learning_material_id', $this->learning_material_id)
+            ->first();
+
+        if (!$progress) {
+            return false;
+        }
+
+        // Check if marked as completed
+        if ($progress->status === 'completed') {
+            return true;
+        }
+
+        // Check completion criteria if specified
+        $criteria = $this->completion_criteria;
+        if (empty($criteria)) {
+            // Default criteria: just need to view/interact
+            return $progress->progress_percentage >= 100;
+        }
+
+        $criteriasMet = true;
+
+        // Check minimum time requirement
+        if (isset($criteria['minimum_time'])) {
+            $requiredMinutes = $criteria['minimum_time'];
+            $timeSpentMinutes = ($progress->time_spent ?? 0) / 60;
+            if ($timeSpentMinutes < $requiredMinutes) {
+                $criteriasMet = false;
+            }
+        }
+
+        // Check quiz score requirement
+        if (isset($criteria['quiz_score'])) {
+            $requiredScore = $criteria['quiz_score'];
+            if (($progress->score ?? 0) < $requiredScore) {
+                $criteriasMet = false;
+            }
+        }
+
+        // Check interaction requirement
+        if (isset($criteria['interaction_required']) && $criteria['interaction_required']) {
+            $interactionData = json_decode($progress->interaction_data, true) ?? [];
+            if (empty($interactionData)) {
+                $criteriasMet = false;
+            }
+        }
+
+        return $criteriasMet;
     }
 
     /**

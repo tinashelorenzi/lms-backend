@@ -6,24 +6,28 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    public function up(): void
+    public function up()
     {
-        Schema::create('course_student', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('course_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('student_id')->constrained('users')->cascadeOnDelete();
-            $table->string('academic_year'); // e.g., "2024-2025"
-            $table->string('semester')->nullable(); // e.g., "Fall", "Spring"
-            $table->date('enrollment_date')->default(now());
-            $table->string('status')->default('active'); // active, completed, dropped
-            $table->decimal('grade', 5, 2)->nullable(); // Final grade
-            $table->timestamps();
-            
-            $table->unique(['course_id', 'student_id', 'academic_year', 'semester'], 'course_student_unique');
-        });
+        if (!Schema::hasTable('course_student')) {
+            Schema::create('course_student', function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('student_id')->constrained('users')->onDelete('cascade');
+                $table->foreignId('course_id')->constrained()->onDelete('cascade');
+                $table->enum('status', ['enrolled', 'active', 'completed', 'dropped'])->default('enrolled');
+                $table->timestamp('enrolled_at');
+                $table->timestamp('started_at')->nullable();
+                $table->timestamp('completed_at')->nullable();
+                $table->decimal('final_grade', 5, 2)->nullable();
+                $table->timestamps();
+
+                $table->unique(['student_id', 'course_id']);
+                $table->index(['student_id', 'status']);
+                $table->index('enrolled_at');
+            });
+        }
     }
 
-    public function down(): void
+    public function down()
     {
         Schema::dropIfExists('course_student');
     }
