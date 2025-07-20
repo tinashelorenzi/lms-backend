@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CourseContentController;
 use App\Http\Controllers\ActivityLogController;
 
 // Public routes (no authentication required)
@@ -34,5 +35,18 @@ Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
         Route::post('/', [ActivityLogController::class, 'store']);
         Route::get('/statistics', [ActivityLogController::class, 'statistics']);
         Route::get('/{activityLog}', [ActivityLogController::class, 'show']);
+    });
+
+    // Course Content routes
+    Route::prefix('course-content')->group(function () {
+        Route::get('/courses/{course}/materials', [CourseContentController::class, 'getCourseMaterials']);
+        Route::get('/sections/{section}/materials', [CourseContentController::class, 'getSectionMaterials']);
+        Route::post('/materials', [CourseContentController::class, 'createMaterial']);
+        Route::get('/materials/{materialId}', [CourseContentController::class, 'getMaterial']);
+        Route::put('/materials/{materialId}', [CourseContentController::class, 'updateMaterial']);
+        Route::delete('/materials/{materialId}', [CourseContentController::class, 'deleteMaterial']);
+        Route::get('/materials/search', [CourseContentController::class, 'searchMaterials']);
+        Route::get('/courses/{course}/analytics', [CourseContentController::class, 'getCourseAnalytics']);
+        Route::get('/courses/{course}/recommendations', [CourseContentController::class, 'getRecommendations']);
     });
 });

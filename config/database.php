@@ -113,16 +113,16 @@ return [
         ],
 
         'mongodb' => [
-            'driver' => 'mongodb',
-            'host' => env('MONGODB_HOST', '127.0.0.1'),
-            'port' => env('MONGODB_PORT', 27017),
-            'database' => env('MONGODB_DATABASE', 'lms_backend'),
-            'username' => env('MONGODB_USERNAME', ''),
-            'password' => env('MONGODB_PASSWORD', ''),
-            'options' => [
-                'database' => env('MONGODB_AUTHENTICATION_DATABASE', 'admin'),
-            ],
-        ],
+    'driver' => 'mongodb',
+    'host' => env('DB_MONGO_HOST', '127.0.0.1'),
+    'port' => env('DB_MONGO_PORT', 27017),
+    'database' => env('DB_MONGO_DATABASE', 'course_materials'),
+    'username' => env('DB_MONGO_USERNAME', ''),
+    'password' => env('DB_MONGO_PASSWORD', ''),
+    'options' => [
+        'database' => env('DB_MONGO_AUTH_DATABASE', 'admin'),
+    ],
+],
 
     ],
 

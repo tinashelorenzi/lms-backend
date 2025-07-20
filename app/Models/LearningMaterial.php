@@ -2,167 +2,154 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Builder;
+use MongoDB\Laravel\Eloquent\Model;
 use Illuminate\Database\Eloquent\Casts\Attribute;
-use App\Enums\ContentFormat;
-use App\Services\ContentProcessor;
 
 class LearningMaterial extends Model
 {
+    protected $connection = 'mongodb';
+    protected $collection = 'learning_materials';
+
     protected $fillable = [
         'title',
         'description',
-        'content',  // Keep for backward compatibility
-        'content_format',
-        'content_raw',
-        'content_compiled',
-        'embedded_media',
-        'editor_config',
-        'allow_latex',
-        'allow_embeds',
-        'content_blocks',
-        'estimated_duration',
-        'tags',
+        'content_type', // video, document, quiz, assignment, etc.
+        'content_data', // flexible content storage
         'metadata',
+        'settings',
+        'estimated_duration',
+        'difficulty_level',
+        'prerequisites',
+        'learning_objectives',
+        'tags',
         'is_active',
+        'version',
+        'created_by',
+        'updated_by',
     ];
 
     protected $casts = [
-        'embedded_media' => 'array',
-        'editor_config' => 'array',
-        'content_blocks' => 'array',
-        'tags' => 'array',
+        'content_data' => 'array',
         'metadata' => 'array',
+        'settings' => 'array',
+        'prerequisites' => 'array',
+        'learning_objectives' => 'array',
+        'tags' => 'array',
         'is_active' => 'boolean',
-        'allow_latex' => 'boolean',
-        'allow_embeds' => 'boolean',
+        'estimated_duration' => 'integer',
     ];
 
     /**
-     * Sections that use this learning material
+     * Get sections that use this material (MySQL relationship)
      */
-    public function sections(): BelongsToMany
+    public function sections()
     {
-        return $this->belongsToMany(Section::class, 'section_materials')
-            ->withPivot([
-                'order_number',
-                'is_required',
-                'completion_criteria'
-            ])
-            ->withTimestamps()
-            ->orderBy('section_materials.order_number');
+        // We'll handle this through a service since we can't directly relate MongoDB to MySQL
+        return app(CourseContentService::class)->getSectionsForMaterial($this->_id);
     }
 
     /**
-     * Get compiled content with all processing applied
+     * Get the content based on type
      */
-    protected function compiledContent(): Attribute
+    protected function formattedContent(): Attribute
     {
         return Attribute::make(
             get: function () {
-                if ($this->content_compiled) {
-                    return $this->content_compiled;
-                }
-                
-                // Auto-compile from raw content if needed
-                return app(ContentProcessor::class)->compile($this);
+                return match ($this->content_type) {
+                    'video' => $this->formatVideoContent(),
+                    'document' => $this->formatDocumentContent(),
+                    'quiz' => $this->formatQuizContent(),
+                    'assignment' => $this->formatAssignmentContent(),
+                    'interactive' => $this->formatInteractiveContent(),
+                    default => $this->content_data
+                };
             }
         );
     }
 
-    /**
-     * Get content type based on analysis
-     */
-    public function getContentTypeAttribute(): string
+    private function formatVideoContent(): array
     {
-        $media = $this->embedded_media ?? [];
-        $hasVideo = collect($media)->where('type', 'video')->isNotEmpty();
-        $hasText = !empty($this->content_raw) || !empty($this->content);
-        
-        if ($hasVideo && $hasText) return 'mixed';
-        if ($hasVideo) return 'video';
-        if ($hasText) return 'text';
-        return 'empty';
+        return [
+            'type' => 'video',
+            'url' => $this->content_data['url'] ?? '',
+            'duration' => $this->content_data['duration'] ?? 0,
+            'subtitles' => $this->content_data['subtitles'] ?? [],
+            'chapters' => $this->content_data['chapters'] ?? [],
+            'quality_options' => $this->content_data['quality_options'] ?? [],
+        ];
     }
 
-    /**
-     * Get estimated reading/viewing time
-     */
-    public function getEstimatedTimeAttribute(): int
+    private function formatDocumentContent(): array
     {
-        if ($this->estimated_duration) {
-            return $this->estimated_duration;
-        }
+        return [
+            'type' => 'document',
+            'file_url' => $this->content_data['file_url'] ?? '',
+            'file_type' => $this->content_data['file_type'] ?? 'pdf',
+            'pages' => $this->content_data['pages'] ?? 1,
+            'download_allowed' => $this->content_data['download_allowed'] ?? true,
+        ];
+    }
 
-        // Auto-calculate based on content
-        $time = 0;
-        
-        // Text reading time (200 words per minute)
-        $wordCount = str_word_count(strip_tags($this->content_raw ?? $this->content ?? ''));
-        $time += ceil($wordCount / 200);
-        
-        // Video time
-        $media = $this->embedded_media ?? [];
-        foreach ($media as $item) {
-            if ($item['type'] === 'video' && isset($item['duration'])) {
-                $time += ceil($item['duration'] / 60); // Convert seconds to minutes
-            }
-        }
-        
-        return max(1, $time); // Minimum 1 minute
+    private function formatQuizContent(): array
+    {
+        return [
+            'type' => 'quiz',
+            'questions' => $this->content_data['questions'] ?? [],
+            'time_limit' => $this->content_data['time_limit'] ?? null,
+            'attempts_allowed' => $this->content_data['attempts_allowed'] ?? 1,
+            'randomize_questions' => $this->content_data['randomize_questions'] ?? false,
+            'passing_score' => $this->content_data['passing_score'] ?? 70,
+        ];
+    }
+
+    private function formatAssignmentContent(): array
+    {
+        return [
+            'type' => 'assignment',
+            'instructions' => $this->content_data['instructions'] ?? '',
+            'due_date' => $this->content_data['due_date'] ?? null,
+            'max_points' => $this->content_data['max_points'] ?? 100,
+            'submission_types' => $this->content_data['submission_types'] ?? ['file', 'text'],
+            'rubric' => $this->content_data['rubric'] ?? [],
+        ];
+    }
+
+    private function formatInteractiveContent(): array
+    {
+        return [
+            'type' => 'interactive',
+            'html_content' => $this->content_data['html_content'] ?? '',
+            'css_styles' => $this->content_data['css_styles'] ?? '',
+            'javascript' => $this->content_data['javascript'] ?? '',
+            'resources' => $this->content_data['resources'] ?? [],
+        ];
     }
 
     /**
      * Scope for active materials
      */
-    public function scopeActive(Builder $query): Builder
+    public function scopeActive($query)
     {
         return $query->where('is_active', true);
     }
 
     /**
-     * Scope for materials with specific content format
+     * Scope by content type
      */
-    public function scopeByFormat(Builder $query, ContentFormat $format): Builder
+    public function scopeByType($query, string $type)
     {
-        return $query->where('content_format', $format->value);
+        return $query->where('content_type', $type);
     }
 
     /**
-     * Scope for materials containing video
+     * Full text search
      */
-    public function scopeWithVideo(Builder $query): Builder
+    public function scopeSearch($query, string $searchTerm)
     {
-        return $query->whereJsonContains('embedded_media', ['type' => 'video']);
-    }
-
-    /**
-     * Scope for materials with LaTeX
-     */
-    public function scopeWithLatex(Builder $query): Builder
-    {
-        return $query->where('allow_latex', true);
-    }
-
-    /**
-     * Get the content format as enum
-     */
-    public function getContentFormatEnumAttribute(): ?ContentFormat
-    {
-        return $this->content_format ? ContentFormat::from($this->content_format) : null;
-    }
-
-    /**
-     * Set the content format from enum
-     */
-    public function setContentFormatAttribute($value): void
-    {
-        if ($value instanceof ContentFormat) {
-            $this->attributes['content_format'] = $value->value;
-        } else {
-            $this->attributes['content_format'] = $value;
-        }
+        return $query->where(function ($q) use ($searchTerm) {
+            $q->where('title', 'like', "%{$searchTerm}%")
+              ->orWhere('description', 'like', "%{$searchTerm}%")
+              ->orWhere('tags', 'in', [$searchTerm]);
+        });
     }
 }
